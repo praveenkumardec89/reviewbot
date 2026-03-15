@@ -1,0 +1,49 @@
+# ReviewBot Configuration
+# Customize these settings for your repository
+
+model: claude-sonnet-4-20250514
+
+review:
+  auto_review: true
+  severity_threshold: low        # low | medium | high | critical
+  max_comments_per_pr: 15
+  review_tests: true
+  review_docs: false
+  include_praise: true           # Include positive feedback comments
+  skip_paths:                    # Glob patterns to skip
+    - "**/*.lock"
+    - "**/vendor/**"
+    - "**/node_modules/**"
+    - "**/*.min.js"
+    - "**/*.generated.*"
+
+learning:
+  enabled: true
+  min_feedback_samples: 5        # Min samples before adjusting a rule
+  improvement_schedule: weekly   # weekly | biweekly | monthly
+  auto_create_rules: true        # Auto-generate rules from patterns
+  auto_retire_rules: true        # Auto-retire rules with bad feedback
+  require_approval: true         # Improvement PRs need human approval
+  max_auto_rules: 50             # Max auto-generated rules
+
+build_fixer:
+  enabled: true
+  auto_fix_pr: true              # Create fix PRs for build failures
+  max_fix_attempts: 3            # Max fix attempts per issue
+  confidence_threshold: medium   # Only auto-fix at this confidence or above
+
+components:
+  # Map directories to team owners for context-aware reviews
+  # Uncomment and customize:
+  # src/api/: backend-team
+  # src/ui/: frontend-team
+  # infra/: platform-team
+  # src/ml/: ml-team
+
+notifications:
+  # Uncomment to enable Slack notifications
+  # slack_webhook: ${{ secrets.SLACK_WEBHOOK }}
+  notify_on:
+    - self_improvement_pr
+    - build_fix_pr
+    - critical_finding

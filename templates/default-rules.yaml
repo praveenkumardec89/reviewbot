@@ -1,0 +1,76 @@
+# ReviewBot Rules — These evolve automatically based on team feedback
+# Rules with "auto_generated: true" were created by the self-improvement engine
+# Rules with "boosted: true" have been proven effective by your team
+
+- id: security_secrets
+  description: Flag hardcoded secrets, API keys, tokens, or passwords in code
+  severity: critical
+  category: security
+  scope: "**/*"
+  example: "const API_KEY = 'sk-abc123...'"
+
+- id: error_handling
+  description: Functions that can throw should have proper error handling (try/catch, error returns)
+  severity: high
+  category: bug
+  scope: "**/*.{ts,js,py,java,go}"
+
+- id: null_checks
+  description: Dereferences of potentially null/undefined values without null checks
+  severity: high
+  category: bug
+  scope: "**/*.{ts,js,java}"
+
+- id: race_condition
+  description: Shared mutable state accessed without synchronization in concurrent code
+  severity: high
+  category: bug
+  scope: "**/*.{java,go,py}"
+
+- id: sql_injection
+  description: String concatenation in SQL queries instead of parameterized queries
+  severity: critical
+  category: security
+  scope: "**/*.{py,js,ts,java}"
+
+- id: large_function
+  description: Functions longer than 80 lines should be broken into smaller functions
+  severity: medium
+  category: architecture
+  scope: "**/*"
+
+- id: missing_tests
+  description: New public functions/methods should have corresponding test coverage
+  severity: medium
+  category: test
+  scope: "src/**/*"
+
+- id: todo_fixme
+  description: New TODO/FIXME comments should have an associated issue or ticket number
+  severity: low
+  category: style
+  scope: "**/*"
+
+- id: breaking_api
+  description: Changes to public API signatures should be backward compatible or versioned
+  severity: high
+  category: architecture
+  scope: "src/api/**/*"
+
+- id: logging_sensitive
+  description: Never log PII, tokens, passwords, or other sensitive data
+  severity: critical
+  category: security
+  scope: "**/*"
+
+- id: dependency_pin
+  description: Dependencies should be pinned to specific versions, not ranges
+  severity: medium
+  category: infra
+  scope: "**/package.json,**/requirements.txt,**/pom.xml,**/build.gradle"
+
+- id: env_config
+  description: Environment-specific configuration should use env vars, not hardcoded values
+  severity: medium
+  category: architecture
+  scope: "**/*.{ts,js,py,java,go}"
