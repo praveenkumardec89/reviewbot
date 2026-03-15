@@ -1,5 +1,14 @@
-# Copy this file to YOUR repo at .github/workflows/reviewbot.yml
-# Then add ANTHROPIC_API_KEY as a repo secret
+# ─────────────────────────────────────────────────────────────────────────────
+# ReviewBot — Copy this file to YOUR repo at .github/workflows/reviewbot.yml
+#
+# Setup (one-time):
+#   1. Copy this file to .github/workflows/reviewbot.yml in your repo
+#   2. Add ANTHROPIC_API_KEY to your repo secrets:
+#      Settings → Secrets and variables → Actions → New repository secret
+#   3. (Optional) Initialize .reviewbot/ config:
+#      curl -s https://raw.githubusercontent.com/praveenkumardec89/reviewbot/main/scripts/setup.sh | bash
+#   4. Commit and push — ReviewBot activates on your next PR
+# ─────────────────────────────────────────────────────────────────────────────
 
 name: ReviewBot
 on:
@@ -7,12 +16,10 @@ on:
     types: [opened, synchronize, reopened, closed]
   pull_request_review:
     types: [submitted]
-  pull_request_review_comment:
-    types: [created]
   issues:
     types: [labeled]
   schedule:
-    - cron: '0 2 * * 0'  # Every Sunday 2 AM — self-improvement run
+    - cron: '0 2 * * 0'   # Weekly self-improvement (Sunday 2 AM UTC)
   workflow_dispatch:
     inputs:
       action:
@@ -21,50 +28,50 @@ on:
         options:
           - self-improve
           - re-review
-          - reset-scores
 
 jobs:
-  # ─── PR Review ─────────────────────────────────────
+  # ── PR Review ───────────────────────────────────────────────────────────────
   ai-review:
     if: >
       github.event_name == 'pull_request' &&
-      (github.event.action == 'opened' || github.event.action == 'synchronize')
-    uses: YOUR_ORG/reviewbot/.github/workflows/review.yml@main
+      (github.event.action == 'opened' || github.event.action == 'synchronize') &&
+      !startsWith(github.head_ref, 'reviewbot/')
+    uses: praveenkumardec89/reviewbot/.github/workflows/review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-  # ─── Feedback Tracking ────────────────────────────
+  # ── Feedback Tracking ───────────────────────────────────────────────────────
   track-feedback:
     if: github.event_name == 'pull_request_review'
-    uses: YOUR_ORG/reviewbot/.github/workflows/review.yml@main
+    uses: praveenkumardec89/reviewbot/.github/workflows/review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-  # ─── Revert Detection ─────────────────────────────
+  # ── Revert Detection ────────────────────────────────────────────────────────
   detect-revert:
     if: >
       github.event_name == 'pull_request' &&
       github.event.action == 'closed' &&
       github.event.pull_request.merged == true &&
       contains(github.event.pull_request.title, 'Revert')
-    uses: YOUR_ORG/reviewbot/.github/workflows/review.yml@main
+    uses: praveenkumardec89/reviewbot/.github/workflows/review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-  # ─── Weekly Self-Improvement ───────────────────────
+  # ── Weekly Self-Improvement ─────────────────────────────────────────────────
   self-improve:
     if: >
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'self-improve')
-    uses: YOUR_ORG/reviewbot/.github/workflows/self-improve.yml@main
+    uses: praveenkumardec89/reviewbot/.github/workflows/self-improve.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-  # ─── Build Failure Auto-Fix ────────────────────────
+  # ── Build Failure Auto-Fix ──────────────────────────────────────────────────
   build-fixer:
     if: >
       github.event_name == 'issues' &&
       contains(github.event.issue.labels.*.name, 'build-failure')
-    uses: YOUR_ORG/reviewbot/.github/workflows/self-improve.yml@main
+    uses: praveenkumardec89/reviewbot/.github/workflows/self-improve.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

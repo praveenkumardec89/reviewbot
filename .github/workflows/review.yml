@@ -17,10 +17,26 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
+      # 1. Check out the consumer's repo (where the PR lives + .reviewbot/ config)
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # 2. Check out the ReviewBot engine into a temp dir
+      - name: Checkout ReviewBot engine
+        uses: actions/checkout@v4
+        with:
+          repository: praveenkumardec89/reviewbot
+          ref: main
+          path: _reviewbot_engine
+
+      # 3. Copy engine + templates into workspace so imports resolve correctly
+      - name: Install ReviewBot engine
+        run: |
+          cp -r _reviewbot_engine/engine ./engine
+          cp -r _reviewbot_engine/templates ./templates
+          rm -rf _reviewbot_engine
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -31,28 +47,25 @@ jobs:
         run: pip install anthropic pyyaml requests
 
       - name: Get PR diff
-        id: diff
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr diff ${{ github.event.pull_request.number }} > /tmp/pr_diff.patch
-          echo "diff_file=/tmp/pr_diff.patch" >> $GITHUB_OUTPUT
+        run: gh pr diff ${{ github.event.pull_request.number }} > /tmp/pr_diff.patch
 
-      - name: Load knowledge store
-        id: knowledge
+      # Bootstrap .reviewbot/ from templates if repo hasn't set it up yet
+      - name: Bootstrap knowledge store
         run: |
-          if [ -d ".reviewbot" ]; then
-            echo "has_knowledge=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_knowledge=false" >> $GITHUB_OUTPUT
-            mkdir -p .reviewbot
-            cp ${{ github.action_path }}/../../templates/default-rules.yaml .reviewbot/rules.yaml
-            cp ${{ github.action_path }}/../../templates/default-config.yaml .reviewbot/config.yaml
+          if [ ! -d ".reviewbot" ]; then
+            echo "No .reviewbot/ found — bootstrapping from defaults"
+            mkdir -p .reviewbot/history
+            cp templates/default-rules.yaml .reviewbot/rules.yaml
+            cp templates/default-config.yaml .reviewbot/config.yaml
             echo '{}' > .reviewbot/patterns.json
             echo '{}' > .reviewbot/scores.json
+            echo '{}' > .reviewbot/infra.yaml
+            echo '[]' > .reviewbot/history/improvements.json
           fi
 
-      - name: Run review engine
+      - name: Run multi-agent review
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -63,7 +76,8 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python engine/reviewer.py
+          DIFF_FILE: /tmp/pr_diff.patch
+        run: python -m engine.reviewer
 
   track-feedback:
     name: Track Review Feedback
@@ -72,6 +86,18 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout ReviewBot engine
+        uses: actions/checkout@v4
+        with:
+          repository: praveenkumardec89/reviewbot
+          ref: main
+          path: _reviewbot_engine
+
+      - name: Install ReviewBot engine
+        run: |
+          cp -r _reviewbot_engine/engine ./engine
+          rm -rf _reviewbot_engine
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -88,7 +114,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REVIEW_STATE: ${{ github.event.review.state }}
           REVIEWER: ${{ github.event.review.user.login }}
-        run: python engine/feedback_collector.py
+        run: python -m engine.feedback_collector
 
   detect-revert:
     name: Detect PR Reverts
@@ -101,6 +127,18 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout ReviewBot engine
+        uses: actions/checkout@v4
+        with:
+          repository: praveenkumardec89/reviewbot
+          ref: main
+          path: _reviewbot_engine
+
+      - name: Install ReviewBot engine
+        run: |
+          cp -r _reviewbot_engine/engine ./engine
+          rm -rf _reviewbot_engine
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -116,4 +154,4 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
-        run: python engine/revert_tracker.py
+        run: python -m engine.revert_tracker
