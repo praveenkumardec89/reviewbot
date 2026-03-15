@@ -1,0 +1,80 @@
+name: ReviewCrew - Auto Fix
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      fix_scope:
+        required: true
+        type: string
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  auto-fix:
+    name: Apply ReviewCrew Fixes
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Get the PR head branch name so we can check it out
+      - name: Get PR head ref
+        id: pr-info
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          HEAD_REF=$(gh api repos/$REPO/pulls/${{ inputs.pr_number }} --jq '.head.ref')
+          echo "head_ref=$HEAD_REF" >> $GITHUB_OUTPUT
+
+      # 2. Checkout the PR branch (we will commit fixes back to it)
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr-info.outputs.head_ref }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      # 3. Pull the ReviewCrew engine
+      - name: Checkout ReviewCrew engine
+        uses: actions/checkout@v4
+        with:
+          repository: praveenkumardec89/reviewcrew
+          ref: main
+          path: _reviewcrew_engine
+
+      # 4. Copy engine into workspace so imports resolve
+      - name: Install ReviewCrew engine
+        run: |
+          cp -r _reviewcrew_engine/engine ./engine
+          rm -rf _reviewcrew_engine
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install anthropic requests
+
+      # 5. Configure git identity for the commit
+      - name: Configure git
+        run: |
+          git config user.name "ReviewCrew"
+          git config user.email "reviewcrew@noreply.github.com"
+
+      # 6. Run the fixer
+      - name: Apply fixes
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          FIX_SCOPE: ${{ inputs.fix_scope }}
+        run: python -m engine.fixer

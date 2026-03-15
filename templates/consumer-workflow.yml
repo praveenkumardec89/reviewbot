@@ -8,6 +8,14 @@
 #   3. (Optional) Initialize .reviewcrew/ config:
 #      curl -s https://raw.githubusercontent.com/praveenkumardec89/reviewcrew/main/scripts/setup.sh | bash
 #   4. Commit and push — ReviewCrew activates on your next PR
+#
+# Developer commands (comment on any PR):
+#   /reviewcrew fix all        → fix every open ReviewCrew comment
+#   /reviewcrew fix critical   → fix only critical issues
+#   /reviewcrew fix high       → fix critical + high issues
+#   /reviewcrew fix security   → fix only security findings
+#   /reviewcrew fix <agent>    → fix by agent: code_quality, architecture,
+#                                 simplification, test_coverage, performance
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: ReviewCrew
@@ -16,6 +24,8 @@ on:
     types: [opened, synchronize, reopened, closed]
   pull_request_review:
     types: [submitted]
+  issue_comment:
+    types: [created]
   issues:
     types: [labeled]
   schedule:
@@ -39,6 +49,41 @@ jobs:
     uses: praveenkumardec89/reviewcrew/.github/workflows/review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  # ── Auto Fix (triggered by /reviewcrew fix [scope] comment on a PR) ─────────
+  auto-fix:
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/reviewcrew fix')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse fix scope
+        id: parse
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          # Extract scope: everything after "/reviewcrew fix "
+          SCOPE=$(echo "$COMMENT" | sed 's|/reviewcrew fix||' | xargs)
+          # Default to "all" if nothing specified
+          SCOPE=${SCOPE:-all}
+          echo "scope=$SCOPE" >> $GITHUB_OUTPUT
+          echo "pr_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+
+      - name: React to comment (acknowledge)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions \
+            -X POST -f content='+1'
+
+      - name: Trigger auto-fix workflow
+        uses: praveenkumardec89/reviewcrew/.github/workflows/fix.yml@main
+        with:
+          pr_number: ${{ steps.parse.outputs.pr_number }}
+          fix_scope: ${{ steps.parse.outputs.scope }}
+        secrets:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # ── Feedback Tracking ───────────────────────────────────────────────────────
   track-feedback:

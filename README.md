@@ -103,6 +103,60 @@ N+1 query: getUser() called inside a loop. Fetch all users once before the loop.
 
 ---
 
+## Auto-Fix: One Command to Apply All Review Comments
+
+Once ReviewCrew has reviewed your PR, a developer can comment on the PR to automatically apply fixes:
+
+```
+/reviewcrew fix all        → fix every open ReviewCrew comment
+/reviewcrew fix critical   → fix only critical issues
+/reviewcrew fix high       → fix critical + high severity
+/reviewcrew fix security   → fix only security findings
+/reviewcrew fix code_quality   → fix by agent name
+/reviewcrew fix architecture
+/reviewcrew fix performance
+```
+
+### How It Works
+
+```
+Developer comments "/reviewcrew fix critical"
+    │
+    ▼
+GitHub Actions detects issue_comment event
+    │
+    ▼
+Fixer fetches all open ReviewCrew inline comments
+    │  (identified by hidden tag in each comment body)
+    ▼
+Filters by scope (critical = critical issues only)
+    │
+    ▼
+Groups remaining comments by file
+    │
+    ▼
+Claude applies ALL issues per file in one call
+    │  (avoids inconsistent partial fixes)
+    ▼
+Fixer commits fixed files to the PR branch
+    │
+    ▼
+Posts summary comment:
+    ✅ Fixed: src/auth/login.py (2 issues)
+    ✅ Fixed: src/db/queries.py (1 issue)
+    ⏭️ Skipped: 3 low-severity (use /reviewcrew fix all)
+```
+
+### Fix Rules
+
+1. **Minimal changes** — only the flagged lines are touched
+2. **Preserves formatting** — indentation, blank lines, comments unchanged
+3. **One Claude call per file** — all issues in a file fixed together for consistency
+4. **Commit message** includes scope and which files were fixed
+5. **Review before merging** — the fixer always posts a summary; you control the merge
+
+---
+
 ## The Learning Loop
 
 1. **Agents post comments** tagged with rule IDs and agent names
@@ -273,6 +327,7 @@ src/auth/:
 engine/
 ├── reviewer.py             # Entry point: loads knowledge, fetches PR, posts review
 ├── orchestrator.py         # Routes PR to agents, runs in parallel, merges results
+├── fixer.py                # Auto-fix: applies review comments on /reviewcrew fix command
 └── agents/
     ├── base.py             # BaseAgent: should_run() + review() contract
     ├── security.py         # 🔒 OWASP, secrets, injection, auth
