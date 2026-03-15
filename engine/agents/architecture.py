@@ -95,8 +95,88 @@ class ArchitectureAgent(BaseAgent):
             topology_text += ("Be extra careful about changes that affect message contracts, "
                                "API versioning, or DB schema compatibility across services.\n")
 
+        # Team's explicit architectural rules from architecture.yaml
+        arch_impact = ctx.get("arch_impact", {})
+        arch_config = ctx.get("arch_config", {})
+
+        layer_rules_text = ""
+        layers = arch_config.get("layers", {})
+        if layers:
+            layer_rules_text = "\nTEAM LAYER ARCHITECTURE (from .reviewcrew/architecture.yaml):\n"
+            for layer_name, layer_cfg in list(layers.items())[:6]:
+                if not isinstance(layer_cfg, dict):
+                    continue
+                desc = layer_cfg.get("description", "")
+                forbidden = layer_cfg.get("forbidden_deps", [])
+                layer_rules_text += f"  {layer_name}: {desc}\n"
+                if forbidden:
+                    layer_rules_text += f"    forbidden imports from: {', '.join(forbidden)}\n"
+                notes = layer_cfg.get("notes", "")
+                if notes:
+                    layer_rules_text += f"    notes: {notes}\n"
+
+        pre_detected_violations_text = ""
+        violations = arch_impact.get("layer_violations", [])
+        if violations:
+            pre_detected_violations_text = "\nPRE-DETECTED LAYER VIOLATIONS IN THIS PR:\n"
+            for v in violations[:5]:
+                pre_detected_violations_text += f"  - {v['reason']}\n"
+            pre_detected_violations_text += (
+                "These are definite violations — flag each one as a finding.\n"
+            )
+
+        upstream_text = ""
+        upstream_impact = arch_impact.get("upstream_impact", [])
+        if upstream_impact:
+            upstream_text = "\nUPSTREAM SERVICES THAT MAY BE AFFECTED:\n"
+            for u in upstream_impact[:4]:
+                upstream_text += (
+                    f"  - {u['service']}: {u.get('description','')} "
+                    f"(severity: {u.get('breaking_change_severity','high')})\n"
+                    f"    Changed files: {', '.join(u.get('changed_files',[])[:3])}\n"
+                )
+            upstream_text += ("Check these changes for breaking contract changes. "
+                               "Flag if API shapes, status codes, or schemas were altered.\n")
+
+        downstream_text = ""
+        downstream_impact = arch_impact.get("downstream_impact", [])
+        if downstream_impact:
+            downstream_text = "\nDOWNSTREAM INTEGRATIONS CHANGED:\n"
+            for d in downstream_impact[:4]:
+                downstream_text += (
+                    f"  - {d['service']} ({d.get('type','rest')}): {d.get('description','')}\n"
+                    f"    Changed files: {', '.join(d.get('changed_files',[])[:3])}\n"
+                )
+
+        event_text = ""
+        event_impact = arch_impact.get("event_impact", [])
+        if event_impact:
+            event_text = "\nEVENT CONTRACTS TOUCHED:\n"
+            for e in event_impact[:5]:
+                if e["type"] == "publishes":
+                    event_text += (
+                        f"  - Published event `{e['topic']}` schema file changed. "
+                        f"Consumers: {', '.join(e.get('consumers',[]))}. "
+                        f"This is a {e.get('breaking_change_severity','critical')} risk.\n"
+                    )
+                else:
+                    event_text += (
+                        f"  - Consumer for `{e['topic']}` from {e.get('from','')} was changed.\n"
+                    )
+
+        custom_rules_text = ""
+        custom_rule_hits = arch_impact.get("custom_rule_hits", [])
+        if custom_rule_hits:
+            custom_rules_text = "\nTEAM CUSTOM RULES TO ENFORCE ON CHANGED FILES:\n"
+            for r in custom_rule_hits[:8]:
+                custom_rules_text += (
+                    f"  [{r['severity'].upper()}] {r['rule_id']}: {r['description']}\n"
+                    f"    applies to: {', '.join(f'`{f}`' for f in r['matched_files'][:3])}\n"
+                )
+            custom_rules_text += "Flag any violations of these rules as findings.\n"
+
         return f"""You are a principal software architect performing a structural design review.
-{stack_text}{topology_text}
+{stack_text}{topology_text}{layer_rules_text}{pre_detected_violations_text}{upstream_text}{downstream_text}{event_text}{custom_rules_text}
 
 YOUR SOLE FOCUS — flag only these categories:
 

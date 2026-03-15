@@ -150,7 +150,7 @@ def get_changed_files() -> list:
 
 # ─── Posting Results ─────────────────────────────────────────────────────────
 
-def build_review_body(routing_report: dict) -> str:
+def build_review_body(routing_report: dict, project_context: dict | None = None) -> str:
     """Build the top-level review summary shown on the PR."""
     selected = routing_report.get("selected", [])
     skipped  = routing_report.get("skipped", [])
@@ -168,12 +168,118 @@ def build_review_body(routing_report: dict) -> str:
 
     agents_text = "\n".join(agent_lines)
 
-    return (
+    body = (
         f"## 🤖 ReviewCrew Multi-Agent Review\n\n"
         f"**{total} finding{'s' if total != 1 else ''} from {len(selected)} specialized agent{'s' if len(selected) != 1 else ''}**\n\n"
-        f"{agents_text}\n\n"
-        f"_React with 👍/👎 on comments, or resolve/dismiss them to help me learn and improve._"
+        f"{agents_text}\n"
     )
+
+    # Architectural Impact Summary (shown when arch_impact has findings)
+    if project_context:
+        arch_summary = _build_arch_impact_summary(project_context)
+        if arch_summary:
+            body += f"\n{arch_summary}\n"
+
+    body += "\n_React with 👍/👎 on comments, or resolve/dismiss them to help me learn and improve._"
+    return body
+
+
+def _build_arch_impact_summary(project_context: dict) -> str:
+    """
+    Build the Architectural Impact Summary block shown in the PR review body.
+    Only renders when there is something meaningful to show.
+    """
+    arch_impact = project_context.get("arch_impact", {})
+    arch_config = project_context.get("arch_config", {})
+    module_graph = project_context.get("module_graph", {})
+    ts = project_context.get("tech_stack", {})
+
+    lines = []
+
+    # ── Layer summary ──
+    layer_assignments = arch_impact.get("layer_assignments", {})
+    if layer_assignments:
+        layers_touched = sorted(set(v for v in layer_assignments.values() if v != "unknown"))
+        if layers_touched:
+            lines.append(f"**Layers touched:** {' · '.join(f'`{l}`' for l in layers_touched)}")
+
+    # ── Layer violations ──
+    violations = arch_impact.get("layer_violations", [])
+    if violations:
+        lines.append(f"**⚠️ Layer violations ({len(violations)}):**")
+        for v in violations[:5]:
+            lines.append(f"  - {v['reason']}")
+
+    # ── Blast radius ──
+    high_blast = [(f, info) for f, info in module_graph.items() if info.get("blast_radius", 0) >= 5]
+    if high_blast:
+        lines.append(f"**Blast radius:**")
+        for f, info in sorted(high_blast, key=lambda x: x[1]["blast_radius"], reverse=True)[:3]:
+            lines.append(f"  - `{Path(f).name}` — **{info['blast_radius']}** files depend on this")
+
+    # ── Upstream services ──
+    upstream_impact = arch_impact.get("upstream_impact", [])
+    if upstream_impact:
+        lines.append(f"**Upstream services (callers that may be affected):**")
+        for u in upstream_impact[:4]:
+            sev = u.get("breaking_change_severity", "high").upper()
+            lines.append(f"  - [{sev}] **{u['service']}** — {u['reason']}")
+
+    # ── Downstream services ──
+    downstream_impact = arch_impact.get("downstream_impact", [])
+    if downstream_impact:
+        lines.append(f"**Downstream services (dependencies you call):**")
+        for d in downstream_impact[:4]:
+            lines.append(f"  - **{d['service']}** ({d.get('type','rest')}) — {d['reason']}")
+
+    # ── Events ──
+    event_impact = arch_impact.get("event_impact", [])
+    if event_impact:
+        lines.append(f"**Event contracts touched:**")
+        for e in event_impact[:5]:
+            if e["type"] == "publishes":
+                consumers = e.get("consumers", [])
+                sev = e.get("breaking_change_severity", "critical").upper()
+                lines.append(
+                    f"  - [{sev}] Published `{e['topic']}` schema may have changed "
+                    f"— consumers: {', '.join(consumers)}"
+                )
+            else:
+                lines.append(
+                    f"  - Consumer for `{e['topic']}` (from **{e.get('from','')}**) changed "
+                    f"— verify schema compatibility"
+                )
+
+    # ── Sensitive components ──
+    sensitive = arch_impact.get("sensitive_components", [])
+    if sensitive:
+        lines.append(f"**High-sensitivity areas touched:**")
+        for s in sensitive[:4]:
+            owner_str = f" (owner: {s['owner']})" if s.get("owner") else ""
+            sev_icon = "🚨" if s["sensitivity"] == "critical" else "⚠️"
+            lines.append(f"  - {sev_icon} `{s['path']}`{owner_str} — {s.get('notes', '')}")
+
+    # ── Custom rule hints ──
+    custom_hits = arch_impact.get("custom_rule_hits", [])
+    if custom_hits:
+        lines.append(f"**Team rules to verify ({len(custom_hits)}):**")
+        for r in custom_hits[:5]:
+            lines.append(f"  - `{r['rule_id']}` [{r['severity'].upper()}]: {r['description']}")
+
+    if not lines:
+        return ""
+
+    # Add service identity header if configured
+    svc = arch_config.get("service", {})
+    svc_name = svc.get("name", "")
+    header = f"### 🏗️ Architectural Impact"
+    if svc_name and svc_name != "my-service":
+        stack_str = f"{ts.get('language','')}/{ts.get('framework','')}" if ts.get("language") else ""
+        header += f" — **{svc_name}**"
+        if stack_str:
+            header += f" `({stack_str})`"
+
+    return header + "\n\n" + "\n".join(lines)
 
 
 def post_review(comments: list, routing_report: dict) -> None:
@@ -215,7 +321,7 @@ def post_review(comments: list, routing_report: dict) -> None:
         })
 
     payload = {
-        "body":     build_review_body(routing_report),
+        "body":     build_review_body(routing_report, knowledge.get("project_context")),
         "event":    "COMMENT",
         "comments": review_comments,
     }

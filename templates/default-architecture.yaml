@@ -1,0 +1,334 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ReviewCrew — Architecture Configuration
+# Copy to: .reviewcrew/architecture.yaml
+#
+# This file is the single source of truth ReviewCrew uses to understand YOUR
+# project's structure. The more you fill in, the more precise the reviews.
+#
+# Minimum useful setup:  just the `layers` section (5 minutes)
+# Full setup:            layers + components + upstream/downstream (30 minutes)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Service Identity ──────────────────────────────────────────────────────────
+
+service:
+  name: my-service                  # Short name — used in PR summaries
+  description: ""                   # One sentence: what does this service do?
+  team: ""                          # Owning team (e.g. platform-team, payments-team)
+  type: microservice                # monolith | microservice | library | frontend | cli
+  repo: ""                          # GitHub repo (e.g. myorg/my-service)
+
+
+# ── Layer Definitions ─────────────────────────────────────────────────────────
+#
+# Map directory path patterns to architectural layers.
+# ReviewCrew enforces forbidden_deps rules and surfaces violations in every PR.
+#
+# Tips for filling this in:
+#   - Use glob patterns: "src/**/controller*" matches any depth
+#   - Start with your 3–4 real layers; don't over-engineer it
+#   - forbidden_deps is the most valuable field — it encodes your team's rules
+#
+# Common patterns by framework:
+#
+#   Spring Boot (Java/Kotlin):
+#     presentation → src/main/java/**/controller/**
+#     service      → src/main/java/**/service/**
+#     repository   → src/main/java/**/repository/**
+#     domain       → src/main/java/**/model/**, src/main/java/**/entity/**
+#
+#   NestJS / Express (TypeScript):
+#     presentation → src/**/controllers/**, src/**/routes/**
+#     service      → src/**/services/**
+#     repository   → src/**/repositories/**, src/**/dao/**
+#     domain       → src/**/models/**, src/**/entities/**
+#
+#   Django / FastAPI (Python):
+#     presentation → app/views/**, app/routers/**, app/api/**
+#     service      → app/services/**, app/usecases/**
+#     repository   → app/repositories/**, app/daos/**
+#     domain       → app/models/**, app/schemas/**
+#
+#   Rails (Ruby):
+#     presentation → app/controllers/**
+#     service      → app/services/**
+#     domain       → app/models/**
+#
+#   Go (net/http / Gin / Echo):
+#     presentation → internal/handler**/**, internal/http/**
+#     service      → internal/service**/**, internal/usecase/**
+#     repository   → internal/repository**/**, internal/store/**
+#     domain       → internal/domain/**/**, pkg/**
+
+layers:
+
+  presentation:
+    directories:
+      - "src/**/controller*"
+      - "src/**/handler*"
+      - "src/**/route*"
+      - "src/**/view*"
+      - "src/**/resolver*"
+      - "app/views/**"
+      - "app/controllers/**"
+    description: "HTTP entry points — receive requests and delegate to services. Never own business logic."
+    forbidden_deps:             # Layers this layer MUST NOT directly import
+      - repository
+      - data_access
+    notes: "If controllers import repositories directly, it bypasses the service layer and makes testing harder."
+
+  service:
+    directories:
+      - "src/**/service*"
+      - "src/**/usecase*"
+      - "src/**/business*"
+      - "app/services/**"
+    description: "Business logic — orchestrates repositories, enforces domain rules, owns transactions."
+    forbidden_deps:
+      - presentation
+    notes: "Services should depend on repository interfaces, not concrete implementations."
+
+  repository:
+    directories:
+      - "src/**/repositor*"
+      - "src/**/dao*"
+      - "src/**/store*"
+      - "src/**/persistence*"
+      - "app/repositories/**"
+    description: "Data access — the ONLY layer allowed to query the database directly."
+    forbidden_deps:
+      - presentation
+      - service
+    notes: "Business logic in repositories is a common anti-pattern — it belongs in services."
+
+  domain:
+    directories:
+      - "src/**/model*"
+      - "src/**/entit*"
+      - "src/**/domain*"
+      - "src/**/dto*"
+      - "app/models/**"
+    description: "Domain models — pure business objects. No infrastructure dependencies."
+    forbidden_deps:
+      - presentation
+      - service
+      - repository
+      - infrastructure
+    notes: "Domain objects should be portable and testable without any framework or DB dependency."
+
+  infrastructure:
+    directories:
+      - "src/**/client*"
+      - "src/**/adapter*"
+      - "src/**/gateway*"
+      - "src/**/integration*"
+    description: "External integrations — wraps HTTP clients, SDKs, and message brokers."
+    forbidden_deps:
+      - presentation
+      - service
+    notes: "Infrastructure code should use interfaces defined in the domain/service layer."
+
+
+# ── Component Map ─────────────────────────────────────────────────────────────
+#
+# Describe directories that have special ownership or sensitivity.
+# ReviewCrew will surface this context when those directories are changed.
+#
+# sensitivity levels:
+#   critical — flag every change; requires extra human review (PCI, HIPAA, auth)
+#   high     — extra scrutiny; flag security/breaking-change risks prominently
+#   medium   — normal review with context
+#   low      — informational context only
+
+components:
+  # Example: Payment processing zone
+  # src/payments/:
+  #   owner: payments-team
+  #   notes: "PCI-DSS zone — all changes require security sign-off"
+  #   sensitivity: critical
+  #   slack_channel: "#payments-alerts"
+
+  # Example: Authentication
+  # src/auth/:
+  #   owner: security-team
+  #   notes: "OAuth2 + JWT — coordinate any changes with the security team"
+  #   sensitivity: critical
+
+  # Example: Public API surface
+  # src/api/v1/:
+  #   owner: platform-team
+  #   notes: "Externally versioned API — breaking changes need a deprecation period"
+  #   sensitivity: high
+
+  # Example: Background workers
+  # src/workers/:
+  #   owner: backend-team
+  #   notes: "Long-running jobs — check for proper error handling and idempotency"
+  #   sensitivity: medium
+
+  # Example: Shared infrastructure
+  # src/db/:
+  #   owner: platform-team
+  #   notes: "DB connection pool and migration runner — changes affect the whole service"
+  #   sensitivity: high
+
+
+# ── Upstream Services ─────────────────────────────────────────────────────────
+#
+# Services that call YOUR service.
+# ReviewCrew uses this to warn when a PR may break callers.
+#
+# For each upstream service, declare the contracts they depend on.
+# When files matching contract paths are changed, ReviewCrew flags breaking change risk.
+
+upstream: []
+# Example:
+# upstream:
+#   - name: api-gateway
+#     description: "Routes all external traffic to this service"
+#     team: platform-team
+#     contracts:
+#       - type: rest
+#         paths:
+#           - "/api/v1/users/**"
+#           - "/api/v1/auth/**"
+#         source_files:              # Which source files define this contract
+#           - "src/controllers/UserController.java"
+#           - "src/controllers/AuthController.java"
+#         breaking_change_severity: critical
+#
+#   - name: mobile-app
+#     description: "iOS and Android clients"
+#     contracts:
+#       - type: rest
+#         paths: ["/api/v1/**"]
+#         breaking_change_severity: critical
+#         notes: "Mobile clients update slowly — never remove fields from responses"
+#
+#   - name: partner-api
+#     description: "Third-party API consumers via our developer portal"
+#     contracts:
+#       - type: rest
+#         paths: ["/api/v2/**"]
+#         breaking_change_severity: critical
+
+
+# ── Downstream Services ───────────────────────────────────────────────────────
+#
+# Services YOUR service calls (dependencies).
+# ReviewCrew uses this to warn when interface changes may cascade.
+
+downstream: []
+# Example:
+# downstream:
+#   - name: notification-service
+#     description: "Sends emails, SMS, and push notifications"
+#     type: rest                     # rest | grpc | database | cache | message_queue
+#     base_url_env: NOTIFICATION_SERVICE_URL
+#     source_files:                  # Files in your repo that call this service
+#       - "src/clients/NotificationClient.java"
+#     contracts:
+#       - "POST /notifications/email"
+#       - "POST /notifications/push"
+#
+#   - name: postgres
+#     description: "Primary user data store"
+#     type: database
+#     source_files:
+#       - "src/repositories/**"
+#
+#   - name: redis
+#     description: "Session store and rate limiting cache"
+#     type: cache
+#
+#   - name: kafka
+#     description: "Event bus — publish and subscribe"
+#     type: message_queue
+
+
+# ── Events ────────────────────────────────────────────────────────────────────
+#
+# Events this service publishes and consumes.
+# Any PR touching the listed schema_files triggers a breaking-change warning.
+
+events:
+  publishes: []
+  # Example:
+  # publishes:
+  #   - topic: user.created
+  #     description: "Fired when a new user account is created"
+  #     schema_file: "src/events/UserCreatedEvent.java"   # Change here = breaking
+  #     consumers:
+  #       - auth-service
+  #       - analytics-service
+  #       - notification-service
+  #     breaking_change_severity: critical
+  #
+  #   - topic: user.deleted
+  #     schema_file: "src/events/UserDeletedEvent.java"
+  #     consumers: [payment-service, notification-service]
+  #     breaking_change_severity: critical
+
+  consumes: []
+  # Example:
+  # consumes:
+  #   - topic: payment.completed
+  #     from: payment-service
+  #     handler_files:
+  #       - "src/consumers/PaymentCompletedConsumer.java"
+  #
+  #   - topic: auth.token_revoked
+  #     from: auth-service
+  #     handler_files:
+  #       - "src/handlers/TokenRevocationHandler.java"
+
+
+# ── Custom Architectural Rules ─────────────────────────────────────────────────
+#
+# Team-specific rules ReviewCrew enforces on every PR.
+# These augment the default rules in .reviewcrew/rules.yaml.
+#
+# Each rule:
+#   id           — unique slug (used in feedback tracking)
+#   description  — what the rule checks (shown in PR comments)
+#   severity     — critical | high | medium | low
+#   applies_to   — glob pattern for which files this rule applies to
+#   example      — optional: show a bad example to guide the agent
+
+custom_rules: []
+# Example:
+# custom_rules:
+#   - id: use_structured_logging
+#     description: "Always use our logger module — never use print(), console.log(), or fmt.Println()"
+#     severity: medium
+#     applies_to: "**/*.{py,ts,java,go}"
+#
+#   - id: no_direct_db_in_controller
+#     description: "Controllers must never import or call the database directly — use services"
+#     severity: high
+#     applies_to: "src/**/controller*/**"
+#
+#   - id: event_schema_versioning
+#     description: "Any change to a published event schema must include a schema version bump"
+#     severity: critical
+#     applies_to: "src/events/**"
+#
+#   - id: external_api_circuit_breaker
+#     description: "All HTTP calls to external services must use the circuit breaker pattern"
+#     severity: high
+#     applies_to: "src/**/client*/**"
+#
+#   - id: idempotent_consumers
+#     description: "Message queue consumers must be idempotent — duplicate delivery must be safe"
+#     severity: high
+#     applies_to: "src/**/consumer*/**"
+#
+#   - id: no_business_logic_in_dto
+#     description: "DTOs must be data-only — no business methods, no DB access"
+#     severity: medium
+#     applies_to: "src/**/dto*/**"
+#
+#   - id: paginate_list_endpoints
+#     description: "All list endpoints must support pagination — never return unbounded results"
+#     severity: high
+#     applies_to: "src/**/controller*/**"

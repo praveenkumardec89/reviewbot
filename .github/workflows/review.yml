@@ -59,10 +59,14 @@ jobs:
             mkdir -p .reviewcrew/history
             cp templates/default-rules.yaml .reviewcrew/rules.yaml
             cp templates/default-config.yaml .reviewcrew/config.yaml
+            cp templates/default-architecture.yaml .reviewcrew/architecture.yaml
             echo '{}' > .reviewcrew/patterns.json
             echo '{}' > .reviewcrew/scores.json
             echo '{}' > .reviewcrew/infra.yaml
             echo '[]' > .reviewcrew/history/improvements.json
+          elif [ ! -f ".reviewcrew/architecture.yaml" ]; then
+            echo "Bootstrapping missing architecture.yaml"
+            cp templates/default-architecture.yaml .reviewcrew/architecture.yaml
           fi
 
       - name: Run multi-agent review

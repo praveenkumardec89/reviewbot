@@ -21,9 +21,15 @@ from __future__ import annotations
 
 import re
 import json
+import fnmatch
 import subprocess
 from pathlib import Path
 from collections import defaultdict
+
+try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1183,6 +1189,257 @@ def build_test_coverage_map(repo_root: Path, changed_files: list[str], tech_stac
 
 # ─── Main Builder ──────────────────────────────────────────────────────────────
 
+# ─── Architecture Config Loader ───────────────────────────────────────────────
+
+def load_architecture_config(repo_root: Path) -> dict:
+    """
+    Load .reviewcrew/architecture.yaml — the team's explicit architectural
+    declarations: layers, component map, upstream/downstream, events, custom rules.
+    Returns empty defaults if the file doesn't exist yet.
+    """
+    arch_file = repo_root / ".reviewcrew" / "architecture.yaml"
+    empty = {
+        "service": {},
+        "layers": {},
+        "components": {},
+        "upstream": [],
+        "downstream": [],
+        "events": {"publishes": [], "consumes": []},
+        "custom_rules": [],
+        "_loaded": False,
+    }
+
+    if not arch_file.exists() or yaml is None:
+        return empty
+
+    try:
+        content = arch_file.read_text(encoding="utf-8")
+        data = yaml.safe_load(content) or {}
+        data["_loaded"] = True
+        # Ensure expected keys exist
+        for key, default in empty.items():
+            if key not in data:
+                data[key] = default
+        return data
+    except Exception as e:
+        print(f"[ContextBuilder] Warning: failed to parse architecture.yaml — {e}")
+        return empty
+
+
+def analyze_architectural_impact(
+    arch_config: dict,
+    changed_files: list[str],
+    module_graph: dict,
+    repo_root: Path,
+) -> dict:
+    """
+    Cross-references changed files against architecture.yaml to produce a
+    concise impact summary:
+      - layer_assignments    which layer each changed file belongs to (per config)
+      - layer_violations     files that import from forbidden layers
+      - upstream_impact      which upstream callers may be affected
+      - downstream_impact    which downstream services may be affected
+      - event_impact         which published/consumed events may be affected
+      - sensitive_components high-sensitivity areas touched by this PR
+      - custom_rule_hits     custom rules that apply to changed files
+    """
+    impact = {
+        "layer_assignments": {},     # file → layer name
+        "layer_violations": [],      # {file, from_layer, to_layer, reason}
+        "upstream_impact": [],       # {service, contract, reason}
+        "downstream_impact": [],     # {service, source_file, reason}
+        "event_impact": [],          # {topic, type, consumers_or_from, reason}
+        "sensitive_components": [],  # {path, owner, notes, sensitivity}
+        "custom_rule_hits": [],      # {file, rule_id, description, severity}
+    }
+
+    if not arch_config.get("_loaded"):
+        return impact
+
+    layers_config = arch_config.get("layers", {})
+    components_config = arch_config.get("components", {}) or {}
+    upstream_config = arch_config.get("upstream", []) or []
+    downstream_config = arch_config.get("downstream", []) or []
+    events_config = arch_config.get("events", {}) or {}
+    custom_rules = arch_config.get("custom_rules", []) or []
+
+    # ── Assign layers to changed files ──
+    for file_path in changed_files:
+        assigned = _assign_layer(file_path, layers_config)
+        impact["layer_assignments"][file_path] = assigned
+
+    # ── Detect layer violations via module graph ──
+    for file_path, graph_info in module_graph.items():
+        from_layer = impact["layer_assignments"].get(file_path, "unknown")
+        if from_layer == "unknown":
+            continue
+        layer_cfg = layers_config.get(from_layer, {})
+        forbidden = layer_cfg.get("forbidden_deps", []) or []
+
+        for imported in graph_info.get("upstream", []):
+            # Try to assign a layer to the imported file
+            to_layer = _assign_layer(imported, layers_config)
+            if to_layer in forbidden:
+                impact["layer_violations"].append({
+                    "file": file_path,
+                    "from_layer": from_layer,
+                    "imports": imported,
+                    "to_layer": to_layer,
+                    "reason": (
+                        f"`{Path(file_path).name}` is in the **{from_layer}** layer "
+                        f"but imports from **{to_layer}** — "
+                        f"{layer_cfg.get('notes', 'layer dependency violation')}"
+                    ),
+                })
+
+    # ── Upstream service impact ──
+    for svc in upstream_config:
+        for contract in (svc.get("contracts") or []):
+            source_files = contract.get("source_files", [])
+            matched = _files_match_patterns(changed_files, source_files)
+            if matched:
+                impact["upstream_impact"].append({
+                    "service": svc["name"],
+                    "description": svc.get("description", ""),
+                    "contract_type": contract.get("type", "rest"),
+                    "contract_paths": contract.get("paths", []),
+                    "changed_files": matched,
+                    "breaking_change_severity": contract.get(
+                        "breaking_change_severity", "high"
+                    ),
+                    "reason": (
+                        f"**{svc['name']}** calls your service via "
+                        f"`{', '.join(contract.get('paths', [])[:3]) or contract.get('type', 'rest')}` — "
+                        f"these source files changed: {', '.join(f'`{f}`' for f in matched[:3])}"
+                    ),
+                })
+
+    # ── Downstream service impact ──
+    for svc in downstream_config:
+        source_files = svc.get("source_files", [])
+        matched = _files_match_patterns(changed_files, source_files)
+        if matched:
+            impact["downstream_impact"].append({
+                "service": svc["name"],
+                "description": svc.get("description", ""),
+                "type": svc.get("type", "rest"),
+                "changed_files": matched,
+                "reason": (
+                    f"You call **{svc['name']}** from: "
+                    f"{', '.join(f'`{f}`' for f in matched[:3])} — "
+                    f"interface changes may affect this integration"
+                ),
+            })
+
+    # ── Event impact ──
+    for event in (events_config.get("publishes") or []):
+        schema_file = event.get("schema_file", "")
+        if schema_file and any(
+            _glob_match(f, schema_file) for f in changed_files
+        ):
+            consumers = event.get("consumers", [])
+            impact["event_impact"].append({
+                "topic": event["topic"],
+                "type": "publishes",
+                "consumers": consumers,
+                "schema_file": schema_file,
+                "breaking_change_severity": event.get(
+                    "breaking_change_severity", "critical"
+                ),
+                "reason": (
+                    f"Event schema `{event['topic']}` may have changed — "
+                    f"consumers that will be affected: {', '.join(consumers)}"
+                ),
+            })
+
+    for event in (events_config.get("consumes") or []):
+        handler_files = event.get("handler_files", [])
+        matched = _files_match_patterns(changed_files, handler_files)
+        if matched:
+            impact["event_impact"].append({
+                "topic": event["topic"],
+                "type": "consumes",
+                "from": event.get("from", ""),
+                "changed_files": matched,
+                "reason": (
+                    f"Event consumer for `{event['topic']}` (from {event.get('from','')}) "
+                    f"was changed — ensure schema compatibility"
+                ),
+            })
+
+    # ── Sensitive component detection ──
+    for comp_path, comp_info in components_config.items():
+        if not isinstance(comp_info, dict):
+            continue
+        matched = [f for f in changed_files if f.startswith(comp_path.rstrip("/"))]
+        if matched:
+            impact["sensitive_components"].append({
+                "path": comp_path,
+                "owner": comp_info.get("owner", ""),
+                "notes": comp_info.get("notes", ""),
+                "sensitivity": comp_info.get("sensitivity", "medium"),
+                "changed_files": matched,
+            })
+
+    # ── Custom rule hits ──
+    for rule in custom_rules:
+        applies_to = rule.get("applies_to", "**/*")
+        matched = [f for f in changed_files if _glob_match(f, applies_to)]
+        if matched:
+            impact["custom_rule_hits"].append({
+                "rule_id": rule.get("id", "custom"),
+                "description": rule.get("description", ""),
+                "severity": rule.get("severity", "medium"),
+                "applies_to": applies_to,
+                "matched_files": matched[:5],
+            })
+
+    return impact
+
+
+def _assign_layer(file_path: str, layers_config: dict) -> str:
+    """Find which configured layer a file belongs to by matching directory patterns."""
+    for layer_name, layer_cfg in layers_config.items():
+        directories = layer_cfg.get("directories", []) if isinstance(layer_cfg, dict) else []
+        for pattern in directories:
+            if _glob_match(file_path, pattern):
+                return layer_name
+    return "unknown"
+
+
+def _glob_match(path: str, pattern: str) -> bool:
+    """Match a path against a glob pattern."""
+    if not pattern:
+        return False
+    # Normalize separators
+    path = path.replace("\\", "/")
+    pattern = pattern.replace("\\", "/")
+    # Direct fnmatch
+    if fnmatch.fnmatch(path, pattern):
+        return True
+    # Try matching just the end of the path
+    if fnmatch.fnmatch(path, f"*/{pattern.lstrip('/')}"):
+        return True
+    # Strip leading **/ from pattern and try matching
+    clean = pattern.lstrip("*").lstrip("/")
+    return clean in path
+
+
+def _files_match_patterns(files: list[str], patterns: list[str]) -> list[str]:
+    """Return files that match any of the given glob patterns."""
+    if not patterns:
+        return []
+    matched = []
+    for f in files:
+        for pattern in patterns:
+            if _glob_match(f, pattern):
+                matched.append(f)
+                break
+    return matched
+
+
+# ─── Main Builder ──────────────────────────────────────────────────────────────
+
 def build_project_context(repo_root: Path, changed_files: list[str]) -> dict:
     """
     Full project context scan. Called once per PR review.
@@ -1229,6 +1486,23 @@ def build_project_context(repo_root: Path, changed_files: list[str]) -> dict:
     print(f"[ContextBuilder] Test coverage: {files_with_tests}/{len(changed_files)} "
           f"changed files have test coverage")
 
+    # Load team's explicit architecture config and run impact analysis
+    arch_config = load_architecture_config(repo_root)
+    if arch_config["_loaded"]:
+        print("[ContextBuilder] Loaded .reviewcrew/architecture.yaml — running impact analysis")
+    arch_impact = analyze_architectural_impact(
+        arch_config, changed_files, module_graph, repo_root
+    )
+    violations = len(arch_impact["layer_violations"])
+    upstream_hits = len(arch_impact["upstream_impact"])
+    downstream_hits = len(arch_impact["downstream_impact"])
+    event_hits = len(arch_impact["event_impact"])
+    print(f"[ContextBuilder] Architectural impact: "
+          f"{violations} layer violations, "
+          f"{upstream_hits} upstream affected, "
+          f"{downstream_hits} downstream affected, "
+          f"{event_hits} event contracts touched")
+
     return {
         "tech_stack": tech_stack,
         "dependencies": dependencies,
@@ -1239,6 +1513,8 @@ def build_project_context(repo_root: Path, changed_files: list[str]) -> dict:
         "service_topology": service_topology,
         "module_graph": module_graph,
         "test_coverage_map": test_coverage_map,
+        "arch_config": arch_config,
+        "arch_impact": arch_impact,
     }
 
 

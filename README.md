@@ -184,6 +184,129 @@ Rules below **-10** (5+ samples) are **retired**. Rules above **+10** are **boos
 
 ---
 
+## Architecture Configuration
+
+ReviewCrew works out of the box. But filling in `.reviewcrew/architecture.yaml` makes reviews dramatically more precise.
+
+### What you can declare
+
+**Layers** — map your directories to architectural layers and enforce forbidden dependencies:
+
+```yaml
+layers:
+  presentation:
+    directories: ["src/**/controller*", "src/**/handler*"]
+    description: "HTTP entry points — never own business logic"
+    forbidden_deps: [repository, data_access]   # Controllers must not import repos
+    notes: "If controllers import repositories, it bypasses the service layer"
+
+  service:
+    directories: ["src/**/service*", "src/**/usecase*"]
+    description: "Business logic layer"
+    forbidden_deps: [presentation]
+
+  repository:
+    directories: ["src/**/repositor*", "src/**/dao*"]
+    description: "Data access — the only layer that queries the DB"
+    forbidden_deps: [presentation, service]
+```
+
+When a PR violates these rules, ReviewCrew calls them out in the PR:
+
+```
+### 🏗️ Architectural Impact
+
+**Layers touched:** `presentation` · `service` · `repository`
+**⚠️ Layer violations (1):**
+  - `UserController.java` is in the **presentation** layer but imports from
+    **repository** — controllers must not import repos directly
+```
+
+**Component map** — flag high-sensitivity areas with ownership:
+
+```yaml
+components:
+  src/payments/:
+    owner: payments-team
+    notes: "PCI-DSS zone — all changes require security sign-off"
+    sensitivity: critical
+
+  src/auth/:
+    owner: security-team
+    notes: "OAuth2 + JWT — coordinate any changes with security team"
+    sensitivity: critical
+```
+
+**Upstream/downstream services** — get warned when contracts may break:
+
+```yaml
+upstream:
+  - name: api-gateway
+    description: "Routes all external traffic to this service"
+    contracts:
+      - type: rest
+        paths: ["/api/v1/users/**"]
+        source_files: ["src/controllers/UserController.java"]
+        breaking_change_severity: critical
+
+downstream:
+  - name: notification-service
+    description: "Sends emails and push notifications"
+    type: rest
+    source_files: ["src/clients/NotificationClient.java"]
+
+  - name: kafka
+    type: message_queue
+```
+
+**Events** — protect published/consumed event schemas:
+
+```yaml
+events:
+  publishes:
+    - topic: user.created
+      schema_file: "src/events/UserCreatedEvent.java"
+      consumers: [auth-service, analytics-service]
+      breaking_change_severity: critical
+
+  consumes:
+    - topic: payment.completed
+      from: payment-service
+      handler_files: ["src/consumers/PaymentConsumer.java"]
+```
+
+**Custom rules** — enforce team-specific conventions on every PR:
+
+```yaml
+custom_rules:
+  - id: use_structured_logging
+    description: "Always use our logger module — never use print() or console.log()"
+    severity: medium
+    applies_to: "**/*.{py,ts,java}"
+
+  - id: idempotent_consumers
+    description: "Message queue consumers must be idempotent — duplicate delivery must be safe"
+    severity: high
+    applies_to: "src/**/consumer*/**"
+```
+
+The full PR summary then looks like:
+
+```
+### 🏗️ Architectural Impact — user-service (java/spring-boot)
+
+**Layers touched:** `service` · `repository`
+**Blast radius:** `UserService.java` — 8 files depend on this
+**Upstream services (callers that may be affected):**
+  - [CRITICAL] api-gateway — UserController.java changed (callers use GET /api/v1/users/**)
+**Event contracts touched:**
+  - [CRITICAL] Published `user.created` schema may have changed — consumers: auth-service, analytics-service
+**Team rules to verify (1):**
+  - `use_structured_logging` [MEDIUM]: Always use our logger module
+```
+
+---
+
 ## Quick Start (5 minutes)
 
 ### Prerequisites
