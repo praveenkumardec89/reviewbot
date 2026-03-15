@@ -1,6 +1,12 @@
 # ReviewCrew Configuration
 # Customize these settings for your repository
 
+# Model used by all ReviewCrew agents.
+# Options (can also be set via REVIEWCREW_MODEL env var / secret):
+#   claude-opus-4-6           — most capable, best for complex codebases
+#   claude-sonnet-4-6         — latest Sonnet, balanced speed + quality (recommended)
+#   claude-sonnet-4-20250514  — previous Sonnet (default)
+#   claude-haiku-4-5-20251001 — fastest and cheapest, good for high-volume repos
 model: claude-sonnet-4-20250514
 
 review:

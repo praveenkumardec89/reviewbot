@@ -21,6 +21,7 @@ from datetime import datetime
 from copy import deepcopy
 
 from anthropic import Anthropic
+from .config import load_model
 
 KNOWLEDGE_DIR = Path(".reviewcrew")
 RULES_FILE = KNOWLEDGE_DIR / "rules.yaml"
@@ -264,7 +265,7 @@ Respond with ONLY valid JSON (no markdown):
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=load_model(),
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -305,7 +306,7 @@ Respond with ONLY valid JSON:
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=load_model(),
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}],
         )

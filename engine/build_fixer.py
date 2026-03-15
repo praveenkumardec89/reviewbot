@@ -14,6 +14,7 @@ from datetime import datetime
 
 import requests
 from anthropic import Anthropic
+from .config import load_model
 
 KNOWLEDGE_DIR = Path(".reviewcrew")
 PATTERNS_FILE = KNOWLEDGE_DIR / "patterns.json"
@@ -154,7 +155,7 @@ Analyze the failure and respond with JSON:
 Only respond with valid JSON."""
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model=load_model(),
         max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
     )

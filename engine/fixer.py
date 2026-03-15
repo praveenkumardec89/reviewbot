@@ -27,6 +27,7 @@ from collections import defaultdict
 
 import requests
 from anthropic import Anthropic
+from .config import load_model
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -209,9 +210,8 @@ STRICT RULES:
 5. Return ONLY the complete corrected file content
 6. No markdown, no code fences, no explanation — raw file content only"""
 
-    model = os.environ.get("REVIEWCREW_MODEL", "claude-sonnet-4-20250514")
     response = client.messages.create(
-        model=model,
+        model=load_model(),
         max_tokens=8096,
         messages=[{"role": "user", "content": prompt}],
     )
