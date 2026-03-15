@@ -1,24 +1,33 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # ReviewCrew — Copy this file to YOUR repo at .github/workflows/reviewcrew.yml
 #
-# Setup (one-time):
+# Setup (one-time, ~5 minutes):
 #   1. Copy this file to .github/workflows/reviewcrew.yml in your repo
 #   2. Add ANTHROPIC_API_KEY to your repo secrets:
 #      Settings → Secrets and variables → Actions → New repository secret
-#   3. (Optional) Initialize .reviewcrew/ config:
+#   3. (Optional but recommended) Describe your architecture:
 #      curl -s https://raw.githubusercontent.com/praveenkumardec89/reviewcrew/main/scripts/setup.sh | bash
+#      then edit .reviewcrew/architecture.yaml
 #   4. Commit and push — ReviewCrew activates on your next PR
 #
-# Developer commands (comment on any PR):
-#   /reviewcrew fix all        → fix every open ReviewCrew comment
-#   /reviewcrew fix critical   → fix only critical issues
-#   /reviewcrew fix high       → fix critical + high issues
-#   /reviewcrew fix security   → fix only security findings
-#   /reviewcrew fix <agent>    → fix by agent: code_quality, architecture,
-#                                 simplification, test_coverage, performance
+# Developer commands (comment on any PR in this repo):
+#   /reviewcrew fix all          → fix every open ReviewCrew comment
+#   /reviewcrew fix critical     → fix only critical issues
+#   /reviewcrew fix high         → fix critical + high severity
+#   /reviewcrew fix security     → fix only security findings
+#   /reviewcrew fix code_quality → fix by agent name
+#   /reviewcrew fix architecture
+#   /reviewcrew fix performance
+#   /reviewcrew fix test_coverage
+#   /reviewcrew fix simplification
+#
+# Note: /reviewcrew fix only works on PRs from THIS repo (not forks).
+# This is a GitHub security constraint — fork PRs cannot receive pushes
+# from workflows triggered by issue_comment events.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: ReviewCrew
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
@@ -29,7 +38,7 @@ on:
   issues:
     types: [labeled]
   schedule:
-    - cron: '0 2 * * 0'   # Weekly self-improvement (Sunday 2 AM UTC)
+    - cron: '0 2 * * 0'    # Weekly self-improvement (Sunday 2 AM UTC)
   workflow_dispatch:
     inputs:
       action:
@@ -39,7 +48,15 @@ on:
           - self-improve
           - re-review
 
+# Grant enough permissions for all jobs.
+# ReviewCrew needs: read code, write PR reviews/comments, push fix commits.
+permissions:
+  contents: write        # push auto-fix commits to PR branches
+  pull-requests: write   # post review comments and inline findings
+  issues: write          # react to /reviewcrew fix comments, post summaries
+
 jobs:
+
   # ── PR Review ───────────────────────────────────────────────────────────────
   ai-review:
     if: >
@@ -50,40 +67,72 @@ jobs:
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-  # ── Auto Fix (triggered by /reviewcrew fix [scope] comment on a PR) ─────────
-  auto-fix:
+  # ── Auto Fix — Step 1: parse comment + acknowledge ────────────────────────
+  # Parses "/reviewcrew fix [scope]" and reacts with 👍 to acknowledge.
+  # Runs as a regular job (needs steps) before calling the reusable fix workflow.
+  auto-fix-parse:
     if: >
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request != null &&
       startsWith(github.event.comment.body, '/reviewcrew fix')
     runs-on: ubuntu-latest
+    outputs:
+      pr_number: ${{ steps.parse.outputs.pr_number }}
+      fix_scope: ${{ steps.parse.outputs.scope }}
+      is_fork_pr: ${{ steps.parse.outputs.is_fork_pr }}
     steps:
-      - name: Parse fix scope
+      - name: Parse fix scope from comment
         id: parse
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           COMMENT="${{ github.event.comment.body }}"
-          # Extract scope: everything after "/reviewcrew fix "
+          # Extract everything after "/reviewcrew fix "
           SCOPE=$(echo "$COMMENT" | sed 's|/reviewcrew fix||' | xargs)
-          # Default to "all" if nothing specified
           SCOPE=${SCOPE:-all}
           echo "scope=$SCOPE" >> $GITHUB_OUTPUT
           echo "pr_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
 
-      - name: React to comment (acknowledge)
+          # Detect if the PR is from a fork (auto-fix cannot push to forks)
+          PR_JSON=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.issue.number }})
+          HEAD_REPO=$(echo "$PR_JSON" | jq -r '.head.repo.full_name')
+          BASE_REPO="${{ github.repository }}"
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "is_fork_pr=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_fork_pr=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Acknowledge with 👍 reaction
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api \
             repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions \
-            -X POST -f content='+1'
+            -X POST -f content='+1' || true   # non-fatal if reactions are restricted
 
-      - name: Trigger auto-fix workflow
-        uses: praveenkumardec89/reviewcrew/.github/workflows/fix.yml@main
-        with:
-          pr_number: ${{ steps.parse.outputs.pr_number }}
-          fix_scope: ${{ steps.parse.outputs.scope }}
-        secrets:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - name: Warn if fork PR (cannot auto-fix)
+        if: steps.parse.outputs.is_fork_pr == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+            -X POST -f body="⚠️ **ReviewCrew**: Auto-fix cannot push to fork PRs due to GitHub security constraints. Ask the PR author to run \`/reviewcrew fix ${{ steps.parse.outputs.scope }}\` from their fork, or apply the suggested fixes manually."
+
+  # ── Auto Fix — Step 2: run the fix engine ─────────────────────────────────
+  # Called only when Step 1 succeeds and the PR is not from a fork.
+  auto-fix-run:
+    needs: auto-fix-parse
+    if: >
+      needs.auto-fix-parse.result == 'success' &&
+      needs.auto-fix-parse.outputs.is_fork_pr == 'false'
+    uses: praveenkumardec89/reviewcrew/.github/workflows/fix.yml@main
+    with:
+      pr_number: ${{ needs.auto-fix-parse.outputs.pr_number }}
+      fix_scope: ${{ needs.auto-fix-parse.outputs.fix_scope }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # ── Feedback Tracking ───────────────────────────────────────────────────────
   track-feedback:

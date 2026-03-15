@@ -307,85 +307,55 @@ The full PR summary then looks like:
 
 ---
 
-## Quick Start (5 minutes)
+## Quick Start (2 minutes)
 
 ### Prerequisites
 
 - GitHub repo with Actions enabled
 - [Anthropic API key](https://console.anthropic.com/)
 
-### Step 1: Initialize the knowledge store
+### Option A — One command (recommended)
+
+Run this from the root of your repo:
 
 ```bash
-bash scripts/setup.sh
+curl -s https://raw.githubusercontent.com/praveenkumardec89/reviewcrew/main/scripts/setup.sh | bash
 ```
 
-Or manually:
+This creates `.reviewcrew/` with all config files and `.github/workflows/reviewcrew.yml`. Then:
 
 ```bash
-mkdir -p .reviewcrew/history
-cp templates/default-rules.yaml .reviewcrew/rules.yaml
-cp templates/default-config.yaml .reviewcrew/config.yaml
-echo '{}' > .reviewcrew/patterns.json
-echo '{}' > .reviewcrew/scores.json
-echo '{}' > .reviewcrew/infra.yaml
-echo '[]' > .reviewcrew/history/improvements.json
-```
+# Add your API key: Settings → Secrets → Actions → New secret
+# Name: ANTHROPIC_API_KEY
 
-### Step 2: Add the workflow to your repo
-
-Copy `templates/consumer-workflow.yml` to `.github/workflows/reviewcrew.yml`, replacing `YOUR_ORG` with `praveenkumardec89`:
-
-```yaml
-name: ReviewCrew
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, closed]
-  pull_request_review:
-    types: [submitted]
-  issues:
-    types: [labeled]
-  schedule:
-    - cron: '0 2 * * 0'   # Weekly self-improvement
-
-jobs:
-  ai-review:
-    if: >
-      github.event_name == 'pull_request' &&
-      (github.event.action == 'opened' || github.event.action == 'synchronize')
-    uses: praveenkumardec89/reviewcrew/.github/workflows/review.yml@main
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-  track-feedback:
-    if: github.event_name == 'pull_request_review'
-    uses: praveenkumardec89/reviewcrew/.github/workflows/review.yml@main
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-  self-improve:
-    if: github.event_name == 'schedule'
-    uses: praveenkumardec89/reviewcrew/.github/workflows/self-improve.yml@main
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-```
-
-### Step 3: Add your API key
-
-**Settings → Secrets and variables → Actions → New repository secret**
-
-- Name: `ANTHROPIC_API_KEY`
-- Value: Your key from [console.anthropic.com](https://console.anthropic.com/)
-
-### Step 4: Push and go
-
-```bash
 git add .reviewcrew/ .github/workflows/reviewcrew.yml
 git commit -m "Setup ReviewCrew multi-agent code review"
 git push
 ```
 
-ReviewCrew activates on your next PR.
+Done. ReviewCrew activates on your next PR.
+
+### Option B — Manual
+
+1. Copy `templates/consumer-workflow.yml` → `.github/workflows/reviewcrew.yml` in your repo
+2. Copy `templates/default-architecture.yaml` → `.reviewcrew/architecture.yaml`
+3. Copy `templates/default-rules.yaml` → `.reviewcrew/rules.yaml`
+4. Copy `templates/default-config.yaml` → `.reviewcrew/config.yaml`
+5. Add `ANTHROPIC_API_KEY` to repo secrets
+6. Commit and push
+
+### What activates automatically
+
+| Trigger | What happens |
+|---------|-------------|
+| PR opened / updated | Multi-agent review posted as inline comments |
+| PR review submitted | Feedback signals captured (👍/👎 learning) |
+| PR merged with "Revert" in title | Guard rule created for that code area |
+| Comment `/reviewcrew fix [scope]` | Agent applies fixes and pushes a commit |
+| Every Sunday 2 AM UTC | Self-improvement PR raised to update rules |
+| Label `build-failure` on issue | Agent analyses and opens a fix PR |
+
+> **Note on `/reviewcrew fix`:** Auto-fix pushes commits to the PR branch. This requires the PR to be from the same repository (not a fork). Fork PRs will receive an explanation comment instead.
 
 ---
 
