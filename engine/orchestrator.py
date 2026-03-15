@@ -186,8 +186,10 @@ def orchestrate(
     print(f"[Orchestrator] Analyzing PR: {len(files_context)} files, "
           f"{sum(f.get('additions', 0) for f in files_context)} additions")
 
-    # 1. Characterize the PR
+    # 1. Characterize the PR (merge in project context if available)
     pr_context = analyze_pr_context(diff, files_context)
+    if "project_context" in knowledge:
+        pr_context["project_context"] = knowledge["project_context"]
 
     # 2. Route agents
     selected_agents, skipped_agents = route_agents(pr_context)

@@ -19,6 +19,21 @@ class ArchitectureAgent(BaseAgent):
         file_count = pr_context.get("file_count", 0)
         file_names = pr_context.get("file_names", [])
 
+        # High blast radius — changing a file many things depend on
+        module_graph = pr_context.get("project_context", {}).get("module_graph", {})
+        max_blast = max((v.get("blast_radius", 0) for v in module_graph.values()), default=0)
+        if max_blast >= 3:
+            return True, f"high blast radius — up to {max_blast} downstream dependents affected"
+
+        # Service/controller layer changes detected via directory map
+        dir_map = pr_context.get("project_context", {}).get("directory_map", {})
+        if dir_map:
+            for fname in file_names:
+                parent = str(Path(fname).parent)
+                purpose = dir_map.get(parent, "")
+                if any(x in purpose for x in ["service", "controller", "entry point", "gateway", "adapter"]):
+                    return True, f"service/API layer changed: {fname}"
+
         # Large PR
         if additions > 150 or file_count >= 8:
             return True, f"large PR ({additions} additions, {file_count} files)"
@@ -51,7 +66,37 @@ class ArchitectureAgent(BaseAgent):
                     for k, v in info.items():
                         infra_text += f"    {k}: {v}\n"
 
+        # Add tech stack context for framework-specific advice
+        ctx = knowledge.get("project_context", {})
+        ts = ctx.get("tech_stack", {})
+        stack_text = ""
+        if ts.get("framework") and ts["framework"] != "unknown":
+            stack_text = (
+                f"\nPROJECT TECH STACK: {ts.get('language', '')} / {ts.get('framework', '')} "
+                f"/ {ts.get('build_tool', '')}\n"
+                "Apply framework-specific architectural best practices. "
+                f"E.g. for Spring Boot: check @Service/@Repository/@Controller layering, "
+                f"dependency injection, avoid @Autowired on fields. "
+                f"For Django: check fat-model vs fat-view, signals misuse. "
+                f"For NestJS: check module boundaries, circular injection."
+            )
+
+        # Topology context — understanding cross-service impact
+        topo = ctx.get("service_topology", {})
+        topology_text = ""
+        if topo.get("message_queues") or topo.get("external_apis"):
+            topology_text = "\nSERVICE DEPENDENCIES THIS REPO HAS:\n"
+            if topo.get("databases"):
+                topology_text += f"  Databases: {', '.join(topo['databases'][:5])}\n"
+            if topo.get("message_queues"):
+                topology_text += f"  Message queues: {', '.join(topo['message_queues'][:5])}\n"
+            if topo.get("external_apis"):
+                topology_text += f"  External APIs: {', '.join(topo['external_apis'][:5])}\n"
+            topology_text += ("Be extra careful about changes that affect message contracts, "
+                               "API versioning, or DB schema compatibility across services.\n")
+
         return f"""You are a principal software architect performing a structural design review.
+{stack_text}{topology_text}
 
 YOUR SOLE FOCUS — flag only these categories:
 

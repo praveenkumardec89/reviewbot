@@ -73,7 +73,34 @@ class PerformanceAgent(BaseAgent):
             for component, info in hotspots.items():
                 hotspot_text += f"  {component}: {info.get('recent_critical_issues', 0)} recent issues\n"
 
+        ctx = knowledge.get("project_context", {})
+        topo = ctx.get("service_topology", {})
+        topo_text = ""
+        if topo.get("databases") or topo.get("message_queues") or topo.get("caches"):
+            topo_text = "\nINFRASTRUCTURE THIS SERVICE USES:\n"
+            if topo.get("databases"):
+                topo_text += f"  Databases: {', '.join(topo['databases'][:4])}\n"
+            if topo.get("caches"):
+                topo_text += f"  Caches available: {', '.join(topo['caches'][:3])}\n"
+                topo_text += ("  When flagging missing caching, mention the available cache layer above.\n")
+            if topo.get("message_queues"):
+                topo_text += f"  Message queues: {', '.join(topo['message_queues'][:3])}\n"
+            if not topo.get("caches"):
+                topo_text += ("  No caching layer detected — be realistic about suggesting cache solutions "
+                               "without first recommending adding a cache infrastructure.\n")
+
+        db = ctx.get("db_schema", {})
+        schema_text = ""
+        if db.get("orm") and db["orm"] != "unknown":
+            schema_text = f"\nORM IN USE: {db['orm']}\n"
+            if db.get("entities"):
+                entity_names = [e["class"] for e in db["entities"][:10]]
+                schema_text += f"  Entities: {', '.join(entity_names)}\n"
+            schema_text += ("  Check for N+1 queries with lazy-loaded associations. "
+                             "Suggest eager loading / JOIN FETCH where appropriate.\n")
+
         return f"""You are a performance engineering specialist reviewing code for efficiency issues.
+{topo_text}{schema_text}
 
 YOUR SOLE FOCUS — flag only these categories:
 

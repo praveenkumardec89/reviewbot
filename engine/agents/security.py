@@ -16,7 +16,6 @@ class SecurityAgent(BaseAgent):
         return True, "security review runs on all PRs"
 
     def build_system_prompt(self, knowledge: dict) -> str:
-        # Pull any known bad security patterns from the knowledge store
         known_bad = knowledge.get("patterns", {}).get("known_bad", [])
         security_patterns = [
             p for p in known_bad if "security" in p.get("reason", "").lower()
@@ -27,7 +26,30 @@ class SecurityAgent(BaseAgent):
             for p in security_patterns[:10]:
                 patterns_text += f"  - {p['pattern']}: {p['reason']}\n"
 
+        # Security-sensitive dependencies from context builder
+        ctx = knowledge.get("project_context", {})
+        sec_deps = ctx.get("dependencies", {}).get("security_relevant", [])
+        deps_text = ""
+        if sec_deps:
+            deps_text = "\nSECURITY-SENSITIVE DEPENDENCIES IN USE:\n"
+            for dep in sec_deps[:10]:
+                deps_text += f"  - {dep}\n"
+            deps_text += ("Check if any new code uses these libraries in ways that could "
+                           "expose known CVEs or insecure APIs.\n")
+
+        # Topology — flag if this service handles external input or talks to sensitive systems
+        topo = ctx.get("service_topology", {})
+        topo_text = ""
+        if topo.get("databases") or topo.get("external_apis"):
+            topo_text = "\nSERVICE CONTEXT:\n"
+            if topo.get("databases"):
+                topo_text += f"  Talks to: {', '.join(topo['databases'][:4])}\n"
+            if topo.get("external_apis"):
+                topo_text += f"  Calls external APIs: {', '.join(topo['external_apis'][:4])}\n"
+            topo_text += "  Apply extra scrutiny to DB access patterns and data passed to external calls.\n"
+
         return f"""You are a senior application security engineer performing a focused security review.
+{deps_text}{topo_text}
 
 YOUR SOLE FOCUS — flag issues in these categories only:
 1. SECRETS & CREDENTIALS: hardcoded API keys, tokens, passwords, private keys, connection strings

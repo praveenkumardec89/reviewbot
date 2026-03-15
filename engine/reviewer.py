@@ -12,6 +12,7 @@ from pathlib import Path
 import requests
 
 from .orchestrator import orchestrate
+from .context_builder import build_project_context
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -282,6 +283,11 @@ def main():
     diff          = get_pr_diff()
     files_context = get_changed_files()
     print(f"[ReviewCrew] {len(files_context)} changed files fetched")
+
+    # Build deep project context: tech stack, module graph, topology, etc.
+    changed_paths = [f["filename"] for f in files_context]
+    project_context = build_project_context(Path("."), changed_paths)
+    knowledge["project_context"] = project_context
 
     # Multi-agent orchestrated review
     comments, routing_report = orchestrate(diff, files_context, knowledge)

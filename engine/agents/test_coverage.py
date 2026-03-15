@@ -30,6 +30,12 @@ class TestCoverageAgent(BaseAgent):
         if not non_test_files:
             return False, "PR only touches test files"
 
+        # Context builder found files with zero test coverage
+        test_map = pr_context.get("project_context", {}).get("test_coverage_map", {})
+        uncovered = [f for f in non_test_files if f in test_map and not test_map[f]]
+        if uncovered:
+            return True, f"{len(uncovered)} changed file(s) have no test coverage: {uncovered[0]}"
+
         # If there's production code but no test files at all
         if not test_files and non_test_files:
             return True, f"{len(non_test_files)} production files changed with no test files in PR"
@@ -47,7 +53,31 @@ class TestCoverageAgent(BaseAgent):
         if not review_tests:
             return "Return []"  # Disabled by config
 
+        ctx = knowledge.get("project_context", {})
+        ts = ctx.get("tech_stack", {})
+        framework_text = ""
+        if ts.get("test_framework") and ts["test_framework"] != "unknown":
+            framework_text = (f"\nTEST FRAMEWORK IN USE: {ts['test_framework']}\n"
+                               "Write test suggestions using this framework's idioms and annotations.\n")
+
+        test_map = ctx.get("test_coverage_map", {})
+        coverage_text = ""
+        if test_map:
+            uncovered = [f for f, tests in test_map.items() if not tests]
+            covered = [f for f, tests in test_map.items() if tests]
+            if uncovered:
+                coverage_text = f"\nFILES WITH NO TEST COVERAGE DETECTED:\n"
+                for f in uncovered[:6]:
+                    coverage_text += f"  - `{f}` — NO test file found\n"
+                coverage_text += "Prioritize these files for test coverage suggestions.\n"
+            if covered:
+                coverage_text += "\nFILES WITH EXISTING TESTS:\n"
+                for f in covered[:4]:
+                    tests = test_map[f]
+                    coverage_text += f"  - `{f}` → tested by: {', '.join(f'`{t}`' for t in tests)}\n"
+
         return f"""You are a senior engineer with a strong TDD background, reviewing test coverage.
+{framework_text}{coverage_text}
 
 YOUR SOLE FOCUS — flag only these categories:
 
