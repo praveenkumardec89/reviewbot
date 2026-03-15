@@ -5,7 +5,8 @@ Each agent has a focused domain, a routing check, and a specialized system promp
 
 import os
 import json
-from anthropic import Anthropic
+import time
+from anthropic import Anthropic, RateLimitError
 
 COMMENT_FORMAT = """
 RESPONSE FORMAT — return a JSON array only. Each item:
@@ -27,6 +28,17 @@ RULES:
 - ONLY output valid JSON — no markdown, no prose
 """
 
+# Agents are staggered to avoid hitting the free-tier 10K token/min rate limit
+# when all 6 fire simultaneously. Each agent waits before its first API call.
+AGENT_STAGGER_SECONDS = {
+    "security":       0,
+    "code_quality":   0,
+    "architecture":   0,
+    "simplification": 0,
+    "test_coverage":  12,
+    "performance":    24,
+}
+
 
 class BaseAgent:
     name: str = "base"
@@ -41,15 +53,21 @@ class BaseAgent:
         raise NotImplementedError
 
     def review(self, diff: str, files_context: list, knowledge: dict) -> list[dict]:
-        # Anthropic() reads ANTHROPIC_API_KEY from env automatically — don't pass it
-        # explicitly so it's resolved at call time, not module import time.
+        # Stagger agents to avoid simultaneous rate-limit hits on free tier
+        delay = AGENT_STAGGER_SECONDS.get(self.name, 0)
+        if delay:
+            print(f"[{self.name}] Waiting {delay}s (rate limit stagger)...")
+            time.sleep(delay)
+
+        # Anthropic() reads ANTHROPIC_API_KEY from env automatically — don't pass
+        # it explicitly so it's resolved at call time, not module import time.
         client = Anthropic()
         model = knowledge.get("config", {}).get("model", "claude-sonnet-4-20250514")
 
         pr_number = os.environ.get("PR_NUMBER", "")
-        pr_title = os.environ.get("PR_TITLE", "")
+        pr_title  = os.environ.get("PR_TITLE", "")
         pr_author = os.environ.get("PR_AUTHOR", "")
-        pr_body = os.environ.get("PR_BODY", "")
+        pr_body   = os.environ.get("PR_BODY", "")
 
         user_message = (
             f"PR #{pr_number}: {pr_title}\n"
@@ -61,12 +79,26 @@ class BaseAgent:
             f"Return only a JSON array of comments."
         )
 
-        response = client.messages.create(
-            model=model,
-            max_tokens=2048,
-            system=self.build_system_prompt(knowledge),
-            messages=[{"role": "user", "content": user_message}],
-        )
+        # Retry up to 3 times on rate limit with exponential backoff
+        for attempt in range(3):
+            try:
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=2048,
+                    system=self.build_system_prompt(knowledge),
+                    messages=[{"role": "user", "content": user_message}],
+                )
+                break
+            except RateLimitError as e:
+                wait = 30 * (attempt + 1)
+                if attempt < 2:
+                    print(f"[{self.name}] Rate limited — retrying in {wait}s (attempt {attempt+1}/3)")
+                    time.sleep(wait)
+                else:
+                    print(f"[{self.name}] Rate limited after 3 attempts — skipping")
+                    return []
+        else:
+            return []
 
         text = response.content[0].text.strip()
         if text.startswith("```"):
@@ -76,7 +108,6 @@ class BaseAgent:
 
         try:
             comments = json.loads(text)
-            # Tag each comment with the agent that produced it
             for c in comments:
                 c["agent"] = self.name
             return comments
