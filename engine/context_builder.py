@@ -569,7 +569,7 @@ def build_directory_map(repo_root: Path) -> dict[str, str]:
     """
     directory_map: dict[str, str] = {}
 
-    for item in _iter_dirs(repo_root, max_depth=4):
+    for item in _iter_dirs(repo_root, max_depth=10):
         rel = item.relative_to(repo_root)
         parts = rel.parts
         if not parts:
@@ -931,21 +931,39 @@ def detect_service_topology(repo_root: Path, tech_stack: dict) -> dict:
         if "redis" not in topology["caches"]:
             topology["caches"].append("redis")
 
-    # ── Scan source for HTTP client calls to external services ──
+    # ── Scan source code for HTTP client calls to external services ──
+    # Only scan actual source code, not build/config/XML files (avoids false
+    # positives from Maven namespace URLs, XML schemas, etc.)
+    SOURCE_EXTS = {
+        "java": {".java"}, "kotlin": {".kt"}, "python": {".py"},
+        "typescript": {".ts", ".tsx"}, "javascript": {".js", ".jsx"},
+        "go": {".go"}, "ruby": {".rb"}, "rust": {".rs"},
+    }
+    # URLs that belong to build infrastructure, not runtime API calls
+    BUILD_URL_FRAGMENTS = {
+        "maven.apache.org", "w3.org", "springframework.org/schema",
+        "hibernate.org", "sun.com", "java.sun.com", "oracle.com/xsd",
+        "opencontainers.org", "docker.com/compose", "schemas.xmlsoap",
+        "example.com", "localhost", "127.0.0.1",
+    }
+
     src_patterns = {
-        "java": r"""(?:new\s+RestTemplate|WebClient\.builder|new\s+HttpClient|"https?://([^"]+)")""",
-        "python": r"""requests\.(get|post|put|delete|patch)\s*\(\s*['"](https?://[^'"]+)""",
-        "typescript": r"""(?:axios|fetch|http\w*)\s*\.\s*(?:get|post|put|delete)\s*\(\s*[`'"](https?://[^`'"]+)""",
-        "javascript": r"""(?:axios|fetch)\s*\.\s*(?:get|post)\s*\(\s*['"](https?://[^'"]+)""",
-        "go": r"""http\.(?:Get|Post)\s*\(\s*"(https?://[^"]+)""",
+        "java":       r"""(?:new\s+RestTemplate|WebClient\.builder|new\s+HttpClient|"(https?://[^"]{10,})")""",
+        "kotlin":     r"""(?:RestTemplate|WebClient|HttpClient).*?"(https?://[^"]{10,})" """,
+        "python":     r"""requests\.\w+\s*\(\s*['"](https?://[^'"]{10,})""",
+        "typescript": r"""(?:axios|fetch|http\w*)\.\w+\s*\(\s*[`'"](https?://[^`'"]{10,})""",
+        "javascript": r"""(?:axios|fetch)\.\w+\s*\(\s*['"](https?://[^'"]{10,})""",
+        "go":         r"""http\.(?:Get|Post|NewRequest)\s*\(\s*(?:"[A-Z]*",\s*)?"(https?://[^"]{10,})""",
     }
     lang = tech_stack.get("language", "unknown")
     if lang in src_patterns:
-        for f in _iter_files(repo_root, max_files=200):
+        src_exts = SOURCE_EXTS.get(lang, set())
+        for f in _iter_files(repo_root, exts=src_exts, max_files=200):
             content = _safe_read(f, max_bytes=8000)
             for m in re.finditer(src_patterns[lang], content):
                 url = m.group(m.lastindex or 1)[:80]
-                if url and not any(x in url for x in ["localhost", "127.0.0.1", "{", "$"]):
+                if url and not any(x in url for x in BUILD_URL_FRAGMENTS) \
+                        and not any(x in url for x in ["{", "$", "example"]):
                     if url not in topology["external_apis"]:
                         topology["external_apis"].append(url)
 
