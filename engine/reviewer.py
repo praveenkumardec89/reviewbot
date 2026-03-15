@@ -130,12 +130,29 @@ def get_pr_diff() -> str:
     return resp.text
 
 
-def get_changed_files() -> list:
-    resp = requests.get(
-        f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}/files",
-        headers=HEADERS,
-    )
-    resp.raise_for_status()
+def get_changed_files(max_files: int = 50) -> list:
+    all_files, page = [], 1
+    while True:
+        resp = requests.get(
+            f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}/files",
+            headers=HEADERS,
+            params={"per_page": 100, "page": page},
+        )
+        resp.raise_for_status()
+        batch = resp.json()
+        if not batch:
+            break
+        all_files.extend(batch)
+        if len(all_files) >= max_files or len(batch) < 100:
+            break
+        page += 1
+
+    if len(all_files) > max_files:
+        print(f"[ReviewCrew] Large PR: {len(all_files)} files changed — "
+              f"reviewing first {max_files}. "
+              f"Use /reviewcrew fix to apply suggestions file by file.")
+        all_files = all_files[:max_files]
+
     return [
         {
             "filename":  f["filename"],
@@ -144,7 +161,7 @@ def get_changed_files() -> list:
             "deletions": f["deletions"],
             "patch":     f.get("patch", ""),
         }
-        for f in resp.json()[:20]  # cap at 20 files
+        for f in all_files
     ]
 
 
@@ -282,12 +299,12 @@ def _build_arch_impact_summary(project_context: dict) -> str:
     return header + "\n\n" + "\n".join(lines)
 
 
-def post_review(comments: list, routing_report: dict) -> None:
+def post_review(comments: list, routing_report: dict, knowledge: dict) -> None:
     if not comments and not routing_report.get("selected"):
         print("[ReviewCrew] No agents ran — nothing to post.")
         return
 
-    max_comments = 20
+    max_comments = knowledge.get("config", {}).get("review", {}).get("max_comments_per_pr", 20)
     review_comments = []
 
     for c in comments[:max_comments]:
@@ -321,7 +338,7 @@ def post_review(comments: list, routing_report: dict) -> None:
         })
 
     payload = {
-        "body":     build_review_body(routing_report, knowledge.get("project_context")),
+        "body":     build_review_body(routing_report, knowledge.get("project_context", {})),
         "event":    "COMMENT",
         "comments": review_comments,
     }
@@ -375,7 +392,10 @@ def record_metadata(comments: list, routing_report: dict) -> None:
     })
 
     existing = existing[-500:]
-    metadata_file.write_text(json.dumps(existing, indent=2))
+    try:
+        metadata_file.write_text(json.dumps(existing, indent=2))
+    except OSError as e:
+        print(f"[ReviewCrew] Warning: could not write review metadata: {e}")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -399,7 +419,7 @@ def main():
     comments, routing_report = orchestrate(diff, files_context, knowledge)
 
     # Post to GitHub
-    post_review(comments, routing_report)
+    post_review(comments, routing_report, knowledge)
 
     # Save for feedback tracking + self-improvement
     record_metadata(comments, routing_report)

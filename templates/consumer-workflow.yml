@@ -85,10 +85,10 @@ jobs:
         id: parse
         env:
           GH_TOKEN: ${{ github.token }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
-          COMMENT="${{ github.event.comment.body }}"
-          # Extract everything after "/reviewcrew fix "
-          SCOPE=$(echo "$COMMENT" | sed 's|/reviewcrew fix||' | xargs)
+          # Pass comment via env var — never interpolate user input directly into shell
+          SCOPE=$(echo "$COMMENT_BODY" | sed 's|/reviewcrew fix||' | xargs | sed 's/[^a-zA-Z0-9_-]//g')
           SCOPE=${SCOPE:-all}
           echo "scope=$SCOPE" >> $GITHUB_OUTPUT
           echo "pr_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT

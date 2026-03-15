@@ -197,6 +197,7 @@ class BaseAgent:
         )
 
         # Retry up to 3 times on rate limit with exponential backoff
+        response = None
         for attempt in range(3):
             try:
                 response = client.messages.create(
@@ -206,7 +207,7 @@ class BaseAgent:
                     messages=[{"role": "user", "content": user_message}],
                 )
                 break
-            except RateLimitError as e:
+            except RateLimitError:
                 wait = 30 * (attempt + 1)
                 if attempt < 2:
                     print(f"[{self.name}] Rate limited — retrying in {wait}s (attempt {attempt+1}/3)")
@@ -214,7 +215,8 @@ class BaseAgent:
                 else:
                     print(f"[{self.name}] Rate limited after 3 attempts — skipping")
                     return []
-        else:
+
+        if response is None:
             return []
 
         text = response.content[0].text.strip()
