@@ -1,5 +1,5 @@
 """
-ReviewBot — Revert Tracker
+ReviewCrew — Revert Tracker
 Detects when a PR is reverted and creates strong negative signals.
 
 A revert means the review process MISSED something critical.
@@ -14,7 +14,7 @@ from datetime import datetime
 
 import requests
 
-KNOWLEDGE_DIR = Path(".reviewbot")
+KNOWLEDGE_DIR = Path(".reviewcrew")
 SCORES_FILE = KNOWLEDGE_DIR / "scores.json"
 REVERT_LOG = KNOWLEDGE_DIR / "history" / "reverts.json"
 PATTERNS_FILE = KNOWLEDGE_DIR / "patterns.json"
@@ -73,7 +73,7 @@ def get_original_pr_diff(pr_number):
 
 
 def get_review_history(pr_number):
-    """Get ReviewBot's review comments on the original PR."""
+    """Get ReviewCrew's review comments on the original PR."""
     resp = requests.get(
         f"https://api.github.com/repos/{REPO}/pulls/{pr_number}/comments",
         headers=HEADERS,
@@ -82,7 +82,7 @@ def get_review_history(pr_number):
     if resp.status_code != 200:
         return []
 
-    bot_tag = re.compile(r"<sub>reviewbot:([^:]+):([^<]+)</sub>")
+    bot_tag = re.compile(r"<sub>reviewcrew:([^:]+):([^<]+)</sub>")
     bot_comments = []
     for c in resp.json():
         match = bot_tag.search(c.get("body", ""))

@@ -1,4 +1,4 @@
-name: ReviewBot - Code Review
+name: ReviewCrew - Code Review
 
 on:
   workflow_call:
@@ -17,26 +17,26 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      # 1. Check out the consumer's repo (where the PR lives + .reviewbot/ config)
+      # 1. Check out the consumer's repo (where the PR lives + .reviewcrew/ config)
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. Check out the ReviewBot engine into a temp dir
-      - name: Checkout ReviewBot engine
+      # 2. Check out the ReviewCrew engine into a temp dir
+      - name: Checkout ReviewCrew engine
         uses: actions/checkout@v4
         with:
-          repository: praveenkumardec89/reviewbot
+          repository: praveenkumardec89/reviewcrew
           ref: main
-          path: _reviewbot_engine
+          path: _reviewcrew_engine
 
       # 3. Copy engine + templates into workspace so imports resolve correctly
-      - name: Install ReviewBot engine
+      - name: Install ReviewCrew engine
         run: |
-          cp -r _reviewbot_engine/engine ./engine
-          cp -r _reviewbot_engine/templates ./templates
-          rm -rf _reviewbot_engine
+          cp -r _reviewcrew_engine/engine ./engine
+          cp -r _reviewcrew_engine/templates ./templates
+          rm -rf _reviewcrew_engine
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -51,18 +51,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh pr diff ${{ github.event.pull_request.number }} > /tmp/pr_diff.patch
 
-      # Bootstrap .reviewbot/ from templates if repo hasn't set it up yet
+      # Bootstrap .reviewcrew/ from templates if repo hasn't set it up yet
       - name: Bootstrap knowledge store
         run: |
-          if [ ! -d ".reviewbot" ]; then
-            echo "No .reviewbot/ found — bootstrapping from defaults"
-            mkdir -p .reviewbot/history
-            cp templates/default-rules.yaml .reviewbot/rules.yaml
-            cp templates/default-config.yaml .reviewbot/config.yaml
-            echo '{}' > .reviewbot/patterns.json
-            echo '{}' > .reviewbot/scores.json
-            echo '{}' > .reviewbot/infra.yaml
-            echo '[]' > .reviewbot/history/improvements.json
+          if [ ! -d ".reviewcrew" ]; then
+            echo "No .reviewcrew/ found — bootstrapping from defaults"
+            mkdir -p .reviewcrew/history
+            cp templates/default-rules.yaml .reviewcrew/rules.yaml
+            cp templates/default-config.yaml .reviewcrew/config.yaml
+            echo '{}' > .reviewcrew/patterns.json
+            echo '{}' > .reviewcrew/scores.json
+            echo '{}' > .reviewcrew/infra.yaml
+            echo '[]' > .reviewcrew/history/improvements.json
           fi
 
       - name: Run multi-agent review
@@ -87,17 +87,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout ReviewBot engine
+      - name: Checkout ReviewCrew engine
         uses: actions/checkout@v4
         with:
-          repository: praveenkumardec89/reviewbot
+          repository: praveenkumardec89/reviewcrew
           ref: main
-          path: _reviewbot_engine
+          path: _reviewcrew_engine
 
-      - name: Install ReviewBot engine
+      - name: Install ReviewCrew engine
         run: |
-          cp -r _reviewbot_engine/engine ./engine
-          rm -rf _reviewbot_engine
+          cp -r _reviewcrew_engine/engine ./engine
+          rm -rf _reviewcrew_engine
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -128,17 +128,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout ReviewBot engine
+      - name: Checkout ReviewCrew engine
         uses: actions/checkout@v4
         with:
-          repository: praveenkumardec89/reviewbot
+          repository: praveenkumardec89/reviewcrew
           ref: main
-          path: _reviewbot_engine
+          path: _reviewcrew_engine
 
-      - name: Install ReviewBot engine
+      - name: Install ReviewCrew engine
         run: |
-          cp -r _reviewbot_engine/engine ./engine
-          rm -rf _reviewbot_engine
+          cp -r _reviewcrew_engine/engine ./engine
+          rm -rf _reviewcrew_engine
 
       - name: Setup Python
         uses: actions/setup-python@v5

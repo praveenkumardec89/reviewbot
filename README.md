@@ -1,8 +1,8 @@
-# ReviewBot 🤖
+# ReviewCrew 🤖
 
 **A self-learning AI code review platform powered by multiple specialized agents.**
 
-ReviewBot uses Claude to review pull requests through a team of focused agents — each an expert in its domain. It learns from your team's feedback to retire noisy rules, boost effective ones, and evolve its knowledge automatically.
+ReviewCrew uses Claude to review pull requests through a team of focused agents — each an expert in its domain. It learns from your team's feedback to retire noisy rules, boost effective ones, and evolve its knowledge automatically.
 
 ---
 
@@ -34,7 +34,7 @@ PR Opened
            │  team reacts (👍/👎, resolve/dismiss)
            ▼
     ┌─────────────────────────────┐
-    │   .reviewbot/ knowledge     │
+    │   .reviewcrew/ knowledge     │
     │   rules.yaml  scores.json   │◄── weekly self-improvement
     │   patterns.json  infra.yaml │    raises PR with rule changes
     └─────────────────────────────┘
@@ -76,7 +76,7 @@ Each agent's `should_run()` check is instant — no API call. Agents only run wh
 ### What the Review Looks Like
 
 ```
-## 🤖 ReviewBot Multi-Agent Review
+## 🤖 ReviewCrew Multi-Agent Review
 
 4 findings from 3 specialized agents
 
@@ -108,12 +108,12 @@ N+1 query: getUser() called inside a loop. Fetch all users once before the loop.
 1. **Agents post comments** tagged with rule IDs and agent names
 2. **Your team reacts** — 👍 (useful), 👎 (noise), resolve (fixed it), dismiss (not applicable)
 3. **Signals accumulate** — feedback scores per rule, revert patterns, merge velocity
-4. **Weekly self-improvement** — ReviewBot analyzes all signals:
+4. **Weekly self-improvement** — ReviewCrew analyzes all signals:
    - 🗑️ **Retires** rules consistently getting 👎 or dismissed
    - ⬆️ **Boosts** rules consistently getting 👍 or resolved
    - ✨ **Creates** new rules from repeated review patterns
    - 🛡️ **Creates guard rules** from reverted PRs
-5. **Raises a PR** to `.reviewbot/` — your team reviews and merges
+5. **Raises a PR** to `.reviewcrew/` — your team reviews and merges
 
 ### Feedback Scoring
 
@@ -146,21 +146,21 @@ bash scripts/setup.sh
 Or manually:
 
 ```bash
-mkdir -p .reviewbot/history
-cp templates/default-rules.yaml .reviewbot/rules.yaml
-cp templates/default-config.yaml .reviewbot/config.yaml
-echo '{}' > .reviewbot/patterns.json
-echo '{}' > .reviewbot/scores.json
-echo '{}' > .reviewbot/infra.yaml
-echo '[]' > .reviewbot/history/improvements.json
+mkdir -p .reviewcrew/history
+cp templates/default-rules.yaml .reviewcrew/rules.yaml
+cp templates/default-config.yaml .reviewcrew/config.yaml
+echo '{}' > .reviewcrew/patterns.json
+echo '{}' > .reviewcrew/scores.json
+echo '{}' > .reviewcrew/infra.yaml
+echo '[]' > .reviewcrew/history/improvements.json
 ```
 
 ### Step 2: Add the workflow to your repo
 
-Copy `templates/consumer-workflow.yml` to `.github/workflows/reviewbot.yml`, replacing `YOUR_ORG` with `praveenkumardec89`:
+Copy `templates/consumer-workflow.yml` to `.github/workflows/reviewcrew.yml`, replacing `YOUR_ORG` with `praveenkumardec89`:
 
 ```yaml
-name: ReviewBot
+name: ReviewCrew
 on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
@@ -176,19 +176,19 @@ jobs:
     if: >
       github.event_name == 'pull_request' &&
       (github.event.action == 'opened' || github.event.action == 'synchronize')
-    uses: praveenkumardec89/reviewbot/.github/workflows/review.yml@main
+    uses: praveenkumardec89/reviewcrew/.github/workflows/review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   track-feedback:
     if: github.event_name == 'pull_request_review'
-    uses: praveenkumardec89/reviewbot/.github/workflows/review.yml@main
+    uses: praveenkumardec89/reviewcrew/.github/workflows/review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   self-improve:
     if: github.event_name == 'schedule'
-    uses: praveenkumardec89/reviewbot/.github/workflows/self-improve.yml@main
+    uses: praveenkumardec89/reviewcrew/.github/workflows/self-improve.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -203,12 +203,12 @@ jobs:
 ### Step 4: Push and go
 
 ```bash
-git add .reviewbot/ .github/workflows/reviewbot.yml
-git commit -m "Setup ReviewBot multi-agent code review"
+git add .reviewcrew/ .github/workflows/reviewcrew.yml
+git commit -m "Setup ReviewCrew multi-agent code review"
 git push
 ```
 
-ReviewBot activates on your next PR.
+ReviewCrew activates on your next PR.
 
 ---
 
@@ -216,7 +216,7 @@ ReviewBot activates on your next PR.
 
 ### Disable specific agents
 
-In `.reviewbot/config.yaml`:
+In `.reviewcrew/config.yaml`:
 
 ```yaml
 agents:
@@ -239,7 +239,7 @@ routing:
 
 ### Add custom rules (used by all agents)
 
-Edit `.reviewbot/rules.yaml`:
+Edit `.reviewcrew/rules.yaml`:
 
 ```yaml
 - id: use_structured_logging
@@ -252,7 +252,7 @@ Edit `.reviewbot/rules.yaml`:
 
 ### Add component knowledge
 
-Edit `.reviewbot/infra.yaml` — agents use this for context-aware reviews:
+Edit `.reviewcrew/infra.yaml` — agents use this for context-aware reviews:
 
 ```yaml
 src/payments/:
@@ -312,7 +312,7 @@ comments = deduplicate_and_sort(results)
 ## Knowledge Store
 
 ```
-.reviewbot/
+.reviewcrew/
 ├── config.yaml          ← Edit: model, agents, routing thresholds
 ├── rules.yaml           ← Edit: review rules (auto-evolved + manual)
 ├── infra.yaml           ← Edit: component/team knowledge
@@ -333,9 +333,9 @@ comments = deduplicate_and_sort(results)
 
 ## Self-Improvement PR Example
 
-Every Sunday (or on manual trigger), ReviewBot raises:
+Every Sunday (or on manual trigger), ReviewCrew raises:
 
-> ### 🤖 ReviewBot: Self-improvement update (2026-03-15)
+> ### 🤖 ReviewCrew: Self-improvement update (2026-03-15)
 >
 > **Analysis period:** Last 14 days | **PRs analyzed:** 23
 >
@@ -355,14 +355,14 @@ Every Sunday (or on manual trigger), ReviewBot raises:
 
 ## FAQ
 
-**Q: Does ReviewBot review its own self-improvement PRs?**
-No — PRs from `reviewbot/*` branches are skipped automatically.
+**Q: Does ReviewCrew review its own self-improvement PRs?**
+No — PRs from `reviewcrew/*` branches are skipped automatically.
 
 **Q: What if I want every agent to always run?**
-Set all `routing.*` thresholds to `0` in `.reviewbot/config.yaml`.
+Set all `routing.*` thresholds to `0` in `.reviewcrew/config.yaml`.
 
 **Q: Can I manually trigger a review or self-improvement?**
-Yes — Actions → ReviewBot → Run workflow → select the action.
+Yes — Actions → ReviewCrew → Run workflow → select the action.
 
 **Q: What does it cost?**
 With smart routing, a typical PR triggers 3–4 agents at ~1K–3K tokens each (Claude Sonnet). For a team doing 20 PRs/week, expect ~$8–20/month.
@@ -382,7 +382,7 @@ Focused agents are more accurate — a security specialist catches subtle auth i
 - [ ] Web dashboard for per-agent effectiveness
 - [ ] GitLab CI/CD support
 - [ ] Multi-repo shared knowledge (org-level rules)
-- [ ] Custom agent definitions via `.reviewbot/agents/`
+- [ ] Custom agent definitions via `.reviewcrew/agents/`
 - [ ] PR complexity scoring and auto-assignment
 
 ---

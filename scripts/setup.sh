@@ -1,31 +1,31 @@
 #!/bin/bash
-# ReviewBot Quick Setup Script
-# Run this in your repo root to set up ReviewBot
+# ReviewCrew Quick Setup Script
+# Run this in your repo root to set up ReviewCrew
 
 set -e
 
-echo "🤖 ReviewBot Setup"
+echo "🤖 ReviewCrew Setup"
 echo "=================="
 echo ""
 
-# Check if .reviewbot already exists
-if [ -d ".reviewbot" ]; then
-    echo "⚠️  .reviewbot/ directory already exists. Skipping initialization."
+# Check if .reviewcrew already exists
+if [ -d ".reviewcrew" ]; then
+    echo "⚠️  .reviewcrew/ directory already exists. Skipping initialization."
     echo "   Delete it first if you want a fresh start."
 else
-    echo "📁 Creating .reviewbot/ knowledge store..."
-    mkdir -p .reviewbot/history
+    echo "📁 Creating .reviewcrew/ knowledge store..."
+    mkdir -p .reviewcrew/history
 
     # Copy templates (or create defaults)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     TEMPLATE_DIR="$SCRIPT_DIR/../templates"
 
     if [ -f "$TEMPLATE_DIR/default-rules.yaml" ]; then
-        cp "$TEMPLATE_DIR/default-rules.yaml" .reviewbot/rules.yaml
-        cp "$TEMPLATE_DIR/default-config.yaml" .reviewbot/config.yaml
+        cp "$TEMPLATE_DIR/default-rules.yaml" .reviewcrew/rules.yaml
+        cp "$TEMPLATE_DIR/default-config.yaml" .reviewcrew/config.yaml
     else
         # Inline defaults if templates aren't available
-        cat > .reviewbot/rules.yaml << 'RULES'
+        cat > .reviewcrew/rules.yaml << 'RULES'
 - id: security_secrets
   description: Flag hardcoded secrets, API keys, tokens, or passwords
   severity: critical
@@ -45,7 +45,7 @@ else
   scope: "src/**/*"
 RULES
 
-        cat > .reviewbot/config.yaml << 'CONFIG'
+        cat > .reviewcrew/config.yaml << 'CONFIG'
 model: claude-sonnet-4-20250514
 review:
   auto_review: true
@@ -62,10 +62,10 @@ build_fixer:
 CONFIG
     fi
 
-    echo '{}' > .reviewbot/patterns.json
-    echo '{}' > .reviewbot/scores.json
-    echo '{}' > .reviewbot/infra.yaml
-    echo '[]' > .reviewbot/history/improvements.json
+    echo '{}' > .reviewcrew/patterns.json
+    echo '{}' > .reviewcrew/scores.json
+    echo '{}' > .reviewcrew/infra.yaml
+    echo '[]' > .reviewcrew/history/improvements.json
 
     echo "✅ Knowledge store created"
 fi
@@ -77,8 +77,8 @@ mkdir -p .github/workflows
 
 REVIEWBOT_ORG="${REVIEWBOT_ORG:-your-org}"
 
-cat > .github/workflows/reviewbot.yml << WORKFLOW
-name: ReviewBot
+cat > .github/workflows/reviewcrew.yml << WORKFLOW
+name: ReviewCrew
 on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
@@ -105,13 +105,13 @@ jobs:
     if: >
       github.event_name == 'pull_request' &&
       (github.event.action == 'opened' || github.event.action == 'synchronize')
-    uses: ${REVIEWBOT_ORG}/reviewbot/.github/workflows/review.yml@main
+    uses: ${REVIEWBOT_ORG}/reviewcrew/.github/workflows/review.yml@main
     secrets:
       ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
 
   track-feedback:
     if: github.event_name == 'pull_request_review'
-    uses: ${REVIEWBOT_ORG}/reviewbot/.github/workflows/review.yml@main
+    uses: ${REVIEWBOT_ORG}/reviewcrew/.github/workflows/review.yml@main
     secrets:
       ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -119,7 +119,7 @@ jobs:
     if: >
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'self-improve')
-    uses: ${REVIEWBOT_ORG}/reviewbot/.github/workflows/self-improve.yml@main
+    uses: ${REVIEWBOT_ORG}/reviewcrew/.github/workflows/self-improve.yml@main
     secrets:
       ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -127,24 +127,24 @@ jobs:
     if: >
       github.event_name == 'issues' &&
       contains(github.event.issue.labels.*.name, 'build-failure')
-    uses: ${REVIEWBOT_ORG}/reviewbot/.github/workflows/self-improve.yml@main
+    uses: ${REVIEWBOT_ORG}/reviewcrew/.github/workflows/self-improve.yml@main
     secrets:
       ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
 WORKFLOW
 
-echo "✅ Workflow created at .github/workflows/reviewbot.yml"
+echo "✅ Workflow created at .github/workflows/reviewcrew.yml"
 
 echo ""
 echo "🔑 Next steps:"
 echo "   1. Add ANTHROPIC_API_KEY to your repo secrets"
 echo "      → Settings > Secrets and variables > Actions > New repository secret"
 echo "   2. Replace 'your-org' in the workflow with your actual org/user"
-echo "      → Edit .github/workflows/reviewbot.yml"
+echo "      → Edit .github/workflows/reviewcrew.yml"
 echo "   3. Commit and push:"
-echo "      git add .reviewbot/ .github/workflows/reviewbot.yml"
-echo "      git commit -m 'Setup ReviewBot self-learning code review'"
+echo "      git add .reviewcrew/ .github/workflows/reviewcrew.yml"
+echo "      git commit -m 'Setup ReviewCrew self-learning code review'"
 echo "      git push"
 echo ""
-echo "   4. (Optional) Customize .reviewbot/config.yaml and rules.yaml"
+echo "   4. (Optional) Customize .reviewcrew/config.yaml and rules.yaml"
 echo ""
-echo "🎉 ReviewBot will activate on your next PR!"
+echo "🎉 ReviewCrew will activate on your next PR!"

@@ -1,5 +1,5 @@
 """
-ReviewBot — Entry Point
+ReviewCrew — Entry Point
 Loads knowledge, fetches PR data, runs the multi-agent orchestrator, posts results.
 """
 
@@ -15,7 +15,7 @@ from .orchestrator import orchestrate
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-KNOWLEDGE_DIR = Path(".reviewbot")
+KNOWLEDGE_DIR = Path(".reviewcrew")
 RULES_FILE    = KNOWLEDGE_DIR / "rules.yaml"
 PATTERNS_FILE = KNOWLEDGE_DIR / "patterns.json"
 SCORES_FILE   = KNOWLEDGE_DIR / "scores.json"
@@ -93,7 +93,7 @@ def load_knowledge() -> dict:
                 rule["boosted"] = True
     if suppressed:
         knowledge["rules"] = [r for r in knowledge["rules"] if r.get("id") not in suppressed]
-        print(f"[ReviewBot] Suppressed {len(suppressed)} low-scoring rules: {suppressed}")
+        print(f"[ReviewCrew] Suppressed {len(suppressed)} low-scoring rules: {suppressed}")
 
     return knowledge
 
@@ -168,7 +168,7 @@ def build_review_body(routing_report: dict) -> str:
     agents_text = "\n".join(agent_lines)
 
     return (
-        f"## 🤖 ReviewBot Multi-Agent Review\n\n"
+        f"## 🤖 ReviewCrew Multi-Agent Review\n\n"
         f"**{total} finding{'s' if total != 1 else ''} from {len(selected)} specialized agent{'s' if len(selected) != 1 else ''}**\n\n"
         f"{agents_text}\n\n"
         f"_React with 👍/👎 on comments, or resolve/dismiss them to help me learn and improve._"
@@ -177,7 +177,7 @@ def build_review_body(routing_report: dict) -> str:
 
 def post_review(comments: list, routing_report: dict) -> None:
     if not comments and not routing_report.get("selected"):
-        print("[ReviewBot] No agents ran — nothing to post.")
+        print("[ReviewCrew] No agents ran — nothing to post.")
         return
 
     max_comments = 20
@@ -205,7 +205,7 @@ def post_review(comments: list, routing_report: dict) -> None:
         comment_hash = hashlib.md5(
             f"{c['file']}:{c.get('line', 0)}:{c['comment'][:50]}".encode()
         ).hexdigest()[:8]
-        body += f"\n\n<sub>reviewbot:{rule_id}:{comment_hash}</sub>"
+        body += f"\n\n<sub>reviewcrew:{rule_id}:{comment_hash}</sub>"
 
         review_comments.append({
             "path": c["file"],
@@ -226,9 +226,9 @@ def post_review(comments: list, routing_report: dict) -> None:
     )
 
     if resp.status_code in (200, 201):
-        print(f"[ReviewBot] Posted review: {len(review_comments)} inline comments.")
+        print(f"[ReviewCrew] Posted review: {len(review_comments)} inline comments.")
     else:
-        print(f"[ReviewBot] Failed to post review: {resp.status_code} — {resp.text[:200]}")
+        print(f"[ReviewCrew] Failed to post review: {resp.status_code} — {resp.text[:200]}")
 
 
 # ─── Metadata ─────────────────────────────────────────────────────────────────
@@ -274,14 +274,14 @@ def record_metadata(comments: list, routing_report: dict) -> None:
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    print(f"[ReviewBot] PR #{PR_NUMBER}: {PR_TITLE}")
+    print(f"[ReviewCrew] PR #{PR_NUMBER}: {PR_TITLE}")
 
     knowledge = load_knowledge()
-    print(f"[ReviewBot] Knowledge: {len(knowledge['rules'])} rules loaded")
+    print(f"[ReviewCrew] Knowledge: {len(knowledge['rules'])} rules loaded")
 
     diff          = get_pr_diff()
     files_context = get_changed_files()
-    print(f"[ReviewBot] {len(files_context)} changed files fetched")
+    print(f"[ReviewCrew] {len(files_context)} changed files fetched")
 
     # Multi-agent orchestrated review
     comments, routing_report = orchestrate(diff, files_context, knowledge)

@@ -1,16 +1,16 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# ReviewBot — Copy this file to YOUR repo at .github/workflows/reviewbot.yml
+# ReviewCrew — Copy this file to YOUR repo at .github/workflows/reviewcrew.yml
 #
 # Setup (one-time):
-#   1. Copy this file to .github/workflows/reviewbot.yml in your repo
+#   1. Copy this file to .github/workflows/reviewcrew.yml in your repo
 #   2. Add ANTHROPIC_API_KEY to your repo secrets:
 #      Settings → Secrets and variables → Actions → New repository secret
-#   3. (Optional) Initialize .reviewbot/ config:
-#      curl -s https://raw.githubusercontent.com/praveenkumardec89/reviewbot/main/scripts/setup.sh | bash
-#   4. Commit and push — ReviewBot activates on your next PR
+#   3. (Optional) Initialize .reviewcrew/ config:
+#      curl -s https://raw.githubusercontent.com/praveenkumardec89/reviewcrew/main/scripts/setup.sh | bash
+#   4. Commit and push — ReviewCrew activates on your next PR
 # ─────────────────────────────────────────────────────────────────────────────
 
-name: ReviewBot
+name: ReviewCrew
 on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
@@ -35,15 +35,15 @@ jobs:
     if: >
       github.event_name == 'pull_request' &&
       (github.event.action == 'opened' || github.event.action == 'synchronize') &&
-      !startsWith(github.head_ref, 'reviewbot/')
-    uses: praveenkumardec89/reviewbot/.github/workflows/review.yml@main
+      !startsWith(github.head_ref, 'reviewcrew/')
+    uses: praveenkumardec89/reviewcrew/.github/workflows/review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # ── Feedback Tracking ───────────────────────────────────────────────────────
   track-feedback:
     if: github.event_name == 'pull_request_review'
-    uses: praveenkumardec89/reviewbot/.github/workflows/review.yml@main
+    uses: praveenkumardec89/reviewcrew/.github/workflows/review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -54,7 +54,7 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.merged == true &&
       contains(github.event.pull_request.title, 'Revert')
-    uses: praveenkumardec89/reviewbot/.github/workflows/review.yml@main
+    uses: praveenkumardec89/reviewcrew/.github/workflows/review.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -63,7 +63,7 @@ jobs:
     if: >
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'self-improve')
-    uses: praveenkumardec89/reviewbot/.github/workflows/self-improve.yml@main
+    uses: praveenkumardec89/reviewcrew/.github/workflows/self-improve.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -72,6 +72,6 @@ jobs:
     if: >
       github.event_name == 'issues' &&
       contains(github.event.issue.labels.*.name, 'build-failure')
-    uses: praveenkumardec89/reviewbot/.github/workflows/self-improve.yml@main
+    uses: praveenkumardec89/reviewcrew/.github/workflows/self-improve.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

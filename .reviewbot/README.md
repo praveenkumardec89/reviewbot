@@ -1,5 +1,5 @@
-# ReviewBot Knowledge Store
-# This directory is managed by ReviewBot's self-learning engine.
+# ReviewCrew Knowledge Store
+# This directory is managed by ReviewCrew's self-learning engine.
 # Feel free to edit rules.yaml and config.yaml manually.
 # scores.json and patterns.json are auto-maintained.
 

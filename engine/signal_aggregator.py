@@ -1,5 +1,5 @@
 """
-ReviewBot — Signal Aggregator
+ReviewCrew — Signal Aggregator
 Collects all learning signals from the past week for the self-improvement engine.
 
 Signals:
@@ -19,7 +19,7 @@ from collections import defaultdict
 
 import requests
 
-KNOWLEDGE_DIR = Path(".reviewbot")
+KNOWLEDGE_DIR = Path(".reviewcrew")
 SCORES_FILE = KNOWLEDGE_DIR / "scores.json"
 FEEDBACK_LOG = KNOWLEDGE_DIR / "history" / "feedback.json"
 REVERT_LOG = KNOWLEDGE_DIR / "history" / "reverts.json"

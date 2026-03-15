@@ -1,5 +1,5 @@
 """
-ReviewBot — Feedback Collector
+ReviewCrew — Feedback Collector
 Tracks how the team responds to review comments to build feedback scores.
 
 Signals tracked:
@@ -19,7 +19,7 @@ from datetime import datetime
 
 import requests
 
-KNOWLEDGE_DIR = Path(".reviewbot")
+KNOWLEDGE_DIR = Path(".reviewcrew")
 SCORES_FILE = KNOWLEDGE_DIR / "scores.json"
 FEEDBACK_LOG = KNOWLEDGE_DIR / "history" / "feedback.json"
 
@@ -34,7 +34,7 @@ HEADERS = {
     "Accept": "application/vnd.github.v3+json",
 }
 
-BOT_TAG_PATTERN = re.compile(r"<sub>reviewbot:([^:]+):([^<]+)</sub>")
+BOT_TAG_PATTERN = re.compile(r"<sub>reviewcrew:([^:]+):([^<]+)</sub>")
 
 
 def load_scores():
@@ -83,7 +83,7 @@ def update_score(scores, rule_id, delta, reason):
 
 
 def get_review_comments():
-    """Fetch all review comments on this PR that were made by ReviewBot."""
+    """Fetch all review comments on this PR that were made by ReviewCrew."""
     comments = []
     page = 1
     while True:
@@ -100,7 +100,7 @@ def get_review_comments():
         comments.extend(batch)
         page += 1
 
-    # Filter to ReviewBot comments
+    # Filter to ReviewCrew comments
     bot_comments = []
     for c in comments:
         match = BOT_TAG_PATTERN.search(c.get("body", ""))
@@ -168,7 +168,7 @@ def collect_feedback():
     feedback_log = load_feedback_log()
 
     bot_comments = get_review_comments()
-    print(f"[Feedback] Found {len(bot_comments)} ReviewBot comments on PR #{PR_NUMBER}")
+    print(f"[Feedback] Found {len(bot_comments)} ReviewCrew comments on PR #{PR_NUMBER}")
 
     for comment in bot_comments:
         rule_id = comment["rule_id"]

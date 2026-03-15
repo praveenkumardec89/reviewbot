@@ -1,5 +1,5 @@
 """
-ReviewBot — Build Fixer
+ReviewCrew — Build Fixer
 Analyzes build failures, learns from past fixes, and creates fix PRs.
 
 Triggers when a GitHub issue is labeled 'build-failure'.
@@ -15,7 +15,7 @@ from datetime import datetime
 import requests
 from anthropic import Anthropic
 
-KNOWLEDGE_DIR = Path(".reviewbot")
+KNOWLEDGE_DIR = Path(".reviewcrew")
 PATTERNS_FILE = KNOWLEDGE_DIR / "patterns.json"
 BUILD_FIXES_LOG = KNOWLEDGE_DIR / "history" / "build_fixes.json"
 CONFIG_FILE = KNOWLEDGE_DIR / "config.yaml"
@@ -183,10 +183,10 @@ def create_fix_pr(analysis):
         return
 
     # For high/medium confidence fixes, create a branch and PR
-    branch = f"reviewbot/build-fix-{ISSUE_NUMBER}-{datetime.utcnow().strftime('%Y%m%d%H%M')}"
+    branch = f"reviewcrew/build-fix-{ISSUE_NUMBER}-{datetime.utcnow().strftime('%Y%m%d%H%M')}"
 
     # Post the analysis as a comment on the issue
-    comment_body = f"""## 🔧 ReviewBot Build Fix Analysis
+    comment_body = f"""## 🔧 ReviewCrew Build Fix Analysis
 
 **Root cause:** {analysis.get('root_cause', 'Unknown')}
 **Fix type:** {analysis.get('fix_type', 'unknown')}
@@ -213,9 +213,9 @@ Files to change:
 def post_analysis_comment(analysis):
     """Post the analysis as an issue comment without creating a PR."""
     if not analysis:
-        body = "🤖 ReviewBot could not analyze this build failure. Please investigate manually."
+        body = "🤖 ReviewCrew could not analyze this build failure. Please investigate manually."
     else:
-        body = f"""## 🔍 ReviewBot Build Failure Analysis
+        body = f"""## 🔍 ReviewCrew Build Failure Analysis
 
 **Root cause:** {analysis.get('root_cause', 'Unknown')}
 **Fix type:** {analysis.get('fix_type', 'unknown')}

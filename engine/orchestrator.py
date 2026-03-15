@@ -1,5 +1,5 @@
 """
-ReviewBot Orchestrator — Routes PRs to specialized agents and runs them in parallel.
+ReviewCrew Orchestrator — Routes PRs to specialized agents and runs them in parallel.
 
 Flow:
   1. Analyze PR context (file types, size, patterns) — no API call

@@ -1,5 +1,5 @@
 """
-Base class for all ReviewBot specialized agents.
+Base class for all ReviewCrew specialized agents.
 Each agent has a focused domain, a routing check, and a specialized system prompt.
 """
 
