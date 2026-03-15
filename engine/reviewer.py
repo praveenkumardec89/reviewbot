@@ -1,6 +1,6 @@
 """
-ReviewBot — Core Review Engine
-Reads knowledge store, analyzes PR diff, posts intelligent review comments.
+ReviewBot — Entry Point
+Loads knowledge, fetches PR data, runs the multi-agent orchestrator, posts results.
 """
 
 import os
@@ -8,35 +8,58 @@ import json
 import yaml
 import hashlib
 from pathlib import Path
-from anthropic import Anthropic
 
-# ─── Configuration ────────────────────────────────────────
+import requests
+
+from .orchestrator import orchestrate
+
+# ─── Config ───────────────────────────────────────────────────────────────────
+
 KNOWLEDGE_DIR = Path(".reviewbot")
-RULES_FILE = KNOWLEDGE_DIR / "rules.yaml"
+RULES_FILE    = KNOWLEDGE_DIR / "rules.yaml"
 PATTERNS_FILE = KNOWLEDGE_DIR / "patterns.json"
-SCORES_FILE = KNOWLEDGE_DIR / "scores.json"
-INFRA_FILE = KNOWLEDGE_DIR / "infra.yaml"
-CONFIG_FILE = KNOWLEDGE_DIR / "config.yaml"
+SCORES_FILE   = KNOWLEDGE_DIR / "scores.json"
+INFRA_FILE    = KNOWLEDGE_DIR / "infra.yaml"
+CONFIG_FILE   = KNOWLEDGE_DIR / "config.yaml"
 
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
-REPO = os.environ["REPO"]
-PR_NUMBER = os.environ["PR_NUMBER"]
-PR_TITLE = os.environ.get("PR_TITLE", "")
-PR_BODY = os.environ.get("PR_BODY", "")
-PR_AUTHOR = os.environ.get("PR_AUTHOR", "")
-BASE_SHA = os.environ.get("BASE_SHA", "")
-HEAD_SHA = os.environ.get("HEAD_SHA", "")
+REPO         = os.environ["REPO"]
+PR_NUMBER    = os.environ["PR_NUMBER"]
+PR_TITLE     = os.environ.get("PR_TITLE", "")
+PR_AUTHOR    = os.environ.get("PR_AUTHOR", "")
+
+HEADERS = {
+    "Authorization": f"token {GITHUB_TOKEN}",
+    "Accept": "application/vnd.github.v3+json",
+}
+
+SEVERITY_EMOJI = {
+    "critical": "🚨",
+    "high":     "⚠️",
+    "medium":   "💡",
+    "low":      "📝",
+    "praise":   "✅",
+}
+
+AGENT_EMOJI = {
+    "security":       "🔒",
+    "code_quality":   "✨",
+    "architecture":   "🏗️",
+    "simplification": "🔧",
+    "test_coverage":  "🧪",
+    "performance":    "⚡",
+}
 
 
-def load_knowledge():
-    """Load the entire knowledge store for context injection."""
+# ─── Knowledge Store ─────────────────────────────────────────────────────────
+
+def load_knowledge() -> dict:
     knowledge = {
-        "rules": [],
+        "rules":    [],
         "patterns": {},
-        "scores": {},
-        "infra": {},
-        "config": get_default_config(),
+        "scores":   {},
+        "infra":    {},
+        "config":   _default_config(),
     }
 
     if RULES_FILE.exists():
@@ -55,18 +78,34 @@ def load_knowledge():
         user_config = yaml.safe_load(CONFIG_FILE.read_text()) or {}
         knowledge["config"].update(user_config)
 
+    # Mark boosted rules so agents can prioritize them
+    scores = knowledge["scores"]
+    min_samples = knowledge["config"]["learning"].get("min_feedback_samples", 5)
+    suppressed = []
+    for rule in knowledge["rules"]:
+        rule_id = rule.get("id", "")
+        data = scores.get(f"rule:{rule_id}", {})
+        score, samples = data.get("score", 0), data.get("samples", 0)
+        if samples >= min_samples:
+            if score < -10:
+                suppressed.append(rule_id)
+            elif score > 10:
+                rule["boosted"] = True
+    if suppressed:
+        knowledge["rules"] = [r for r in knowledge["rules"] if r.get("id") not in suppressed]
+        print(f"[ReviewBot] Suppressed {len(suppressed)} low-scoring rules: {suppressed}")
+
     return knowledge
 
 
-def get_default_config():
+def _default_config() -> dict:
     return {
         "model": "claude-sonnet-4-20250514",
         "review": {
             "auto_review": True,
             "severity_threshold": "low",
-            "max_comments_per_pr": 15,
+            "max_comments_per_pr": 20,
             "review_tests": True,
-            "review_docs": False,
         },
         "learning": {
             "enabled": True,
@@ -75,303 +114,126 @@ def get_default_config():
     }
 
 
-def get_effective_rules(knowledge):
-    """Filter rules by their feedback scores — suppress low-scoring rules."""
-    rules = knowledge["rules"]
-    scores = knowledge["scores"]
-    min_samples = knowledge["config"]["learning"].get("min_feedback_samples", 5)
+# ─── GitHub Data ──────────────────────────────────────────────────────────────
 
-    effective_rules = []
-    suppressed_rules = []
-
-    for rule in rules:
-        rule_id = rule.get("id", "")
-        score_data = scores.get(f"rule:{rule_id}", {})
-        total_score = score_data.get("score", 0)
-        sample_count = score_data.get("samples", 0)
-
-        # Only suppress if we have enough samples AND score is very negative
-        if sample_count >= min_samples and total_score < -10:
-            suppressed_rules.append(rule_id)
-            continue
-
-        # Boost high-scoring rules by marking them
-        if sample_count >= min_samples and total_score > 10:
-            rule["_boosted"] = True
-
-        effective_rules.append(rule)
-
-    if suppressed_rules:
-        print(f"[ReviewBot] Suppressed {len(suppressed_rules)} low-scoring rules: {suppressed_rules}")
-
-    return effective_rules
-
-
-def build_system_prompt(knowledge):
-    """Build the review system prompt with all knowledge context."""
-    effective_rules = get_effective_rules(knowledge)
-    config = knowledge["config"]
-    infra = knowledge["infra"]
-    patterns = knowledge["patterns"]
-
-    # Separate boosted vs normal rules
-    boosted = [r for r in effective_rules if r.get("_boosted")]
-    normal = [r for r in effective_rules if not r.get("_boosted")]
-
-    rules_text = ""
-    if boosted:
-        rules_text += "HIGH-CONFIDENCE RULES (proven effective by team feedback):\n"
-        for r in boosted:
-            rules_text += f"  - [{r.get('severity', 'medium')}] {r.get('description', '')}\n"
-            if r.get("example"):
-                rules_text += f"    Example: {r['example']}\n"
-
-    if normal:
-        rules_text += "\nSTANDARD RULES:\n"
-        for r in normal:
-            rules_text += f"  - [{r.get('severity', 'medium')}] {r.get('description', '')}\n"
-            if r.get("example"):
-                rules_text += f"    Example: {r['example']}\n"
-
-    # Build component/infra context
-    infra_text = ""
-    if infra:
-        infra_text = "\nINFRASTRUCTURE & COMPONENT KNOWLEDGE:\n"
-        for component, info in infra.items():
-            infra_text += f"  {component}:\n"
-            if isinstance(info, dict):
-                for k, v in info.items():
-                    infra_text += f"    {k}: {v}\n"
-            else:
-                infra_text += f"    {info}\n"
-
-    # Build known patterns context
-    patterns_text = ""
-    if patterns.get("known_bad"):
-        patterns_text += "\nKNOWN BAD PATTERNS (flag these):\n"
-        for p in patterns["known_bad"][:20]:  # Cap at 20
-            patterns_text += f"  - {p.get('pattern', '')}: {p.get('reason', '')}\n"
-
-    if patterns.get("known_good"):
-        patterns_text += "\nKNOWN GOOD PATTERNS (encourage these):\n"
-        for p in patterns["known_good"][:10]:
-            patterns_text += f"  - {p.get('pattern', '')}: {p.get('reason', '')}\n"
-
-    severity_threshold = config["review"].get("severity_threshold", "low")
-
-    return f"""You are ReviewBot, an AI code reviewer that learns and improves over time.
-You are reviewing a pull request. Your review must be actionable, specific, and helpful.
-
-REVIEW CONFIGURATION:
-- Severity threshold: {severity_threshold} (only comment on issues at this level or above)
-- Review tests: {config['review'].get('review_tests', True)}
-- Max comments: {config['review'].get('max_comments_per_pr', 15)}
-
-{rules_text}
-{infra_text}
-{patterns_text}
-
-SEVERITY LEVELS (in order):
-- critical: Security vulnerabilities, data loss risks, production outages
-- high: Bugs, race conditions, missing error handling, breaking changes
-- medium: Code quality, performance, maintainability issues
-- low: Style, naming, minor suggestions
-- praise: Positive feedback for good patterns (ALWAYS include 1-2 of these)
-
-RESPONSE FORMAT:
-Respond with a JSON array of review comments. Each comment must have:
-{{
-  "file": "path/to/file.ext",
-  "line": <line_number_in_diff>,
-  "severity": "critical|high|medium|low|praise",
-  "category": "security|bug|performance|style|pattern|architecture|test|praise",
-  "comment": "Your review comment (be specific, suggest fix)",
-  "suggested_fix": "optional code suggestion",
-  "rule_id": "id of the rule that triggered this (or 'learned' for pattern-based)"
-}}
-
-IMPORTANT GUIDELINES:
-1. Be specific — reference exact lines and variables
-2. Suggest fixes, don't just point out problems
-3. Acknowledge good patterns with praise comments
-4. Consider the component/infra context when reviewing
-5. If a pattern matches a known bad pattern, flag it with higher confidence
-6. If a pattern matches a known good pattern, praise it
-7. Don't repeat the same type of comment more than 3 times
-8. Focus on logic and correctness over style
-9. Every comment you make will be scored by the team — unhelpful comments lower your credibility
-
-CRITICAL: Only output valid JSON. No markdown, no explanation — just the JSON array."""
-
-
-def get_pr_diff():
-    """Read the PR diff from file."""
+def get_pr_diff() -> str:
     diff_file = os.environ.get("DIFF_FILE", "/tmp/pr_diff.patch")
     if Path(diff_file).exists():
         return Path(diff_file).read_text()
 
-    # Fallback: use GitHub API
-    import requests
-
-    headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3.diff",
-    }
     resp = requests.get(
         f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}",
-        headers=headers,
+        headers={**HEADERS, "Accept": "application/vnd.github.v3.diff"},
     )
     resp.raise_for_status()
     return resp.text
 
 
-def get_changed_files_context():
-    """Get full file content for changed files (for deeper analysis)."""
-    import requests
-
-    headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json",
-    }
+def get_changed_files() -> list:
     resp = requests.get(
         f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}/files",
-        headers=headers,
+        headers=HEADERS,
     )
     resp.raise_for_status()
-    files = resp.json()
-
-    context = []
-    for f in files[:15]:  # Cap at 15 files
-        context.append({
-            "filename": f["filename"],
-            "status": f["status"],
+    return [
+        {
+            "filename":  f["filename"],
+            "status":    f["status"],
             "additions": f["additions"],
             "deletions": f["deletions"],
-            "patch": f.get("patch", ""),
-        })
-    return context
+            "patch":     f.get("patch", ""),
+        }
+        for f in resp.json()[:20]  # cap at 20 files
+    ]
 
 
-def run_review(knowledge, diff, files_context):
-    """Run the Claude-powered review."""
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
-    model = knowledge["config"].get("model", "claude-sonnet-4-20250514")
-    system_prompt = build_system_prompt(knowledge)
+# ─── Posting Results ─────────────────────────────────────────────────────────
 
-    user_message = f"""PR #{PR_NUMBER}: {PR_TITLE}
-Author: {PR_AUTHOR}
-Description: {PR_BODY or '(no description)'}
+def build_review_body(routing_report: dict) -> str:
+    """Build the top-level review summary shown on the PR."""
+    selected = routing_report.get("selected", [])
+    skipped  = routing_report.get("skipped", [])
+    per_agent = routing_report.get("per_agent", {})
+    total    = routing_report.get("total_final", 0)
 
-CHANGED FILES:
-{json.dumps(files_context, indent=2)}
+    # Agents section
+    agent_lines = []
+    for name in selected:
+        emoji = AGENT_EMOJI.get(name, "🔍")
+        count = per_agent.get(name, 0)
+        agent_lines.append(f"  {emoji} **{name}**: {count} finding{'s' if count != 1 else ''}")
+    for name in skipped:
+        agent_lines.append(f"  ~~{name}~~ _(skipped — not relevant to this PR)_")
 
-FULL DIFF:
-```
-{diff[:50000]}
-```
+    agents_text = "\n".join(agent_lines)
 
-Review this PR according to your rules and knowledge. Return only a JSON array of comments."""
-
-    response = client.messages.create(
-        model=model,
-        max_tokens=4096,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
+    return (
+        f"## 🤖 ReviewBot Multi-Agent Review\n\n"
+        f"**{total} finding{'s' if total != 1 else ''} from {len(selected)} specialized agent{'s' if len(selected) != 1 else ''}**\n\n"
+        f"{agents_text}\n\n"
+        f"_React with 👍/👎 on comments, or resolve/dismiss them to help me learn and improve._"
     )
 
-    response_text = response.content[0].text.strip()
 
-    # Parse JSON (handle potential markdown wrapping)
-    if response_text.startswith("```"):
-        response_text = response_text.split("```")[1]
-        if response_text.startswith("json"):
-            response_text = response_text[4:]
-
-    try:
-        comments = json.loads(response_text)
-    except json.JSONDecodeError:
-        print(f"[ReviewBot] Failed to parse review response: {response_text[:200]}")
-        comments = []
-
-    return comments
-
-
-def post_review_comments(comments):
-    """Post review comments to the PR via GitHub API."""
-    import requests
-
-    if not comments:
-        print("[ReviewBot] No comments to post.")
+def post_review(comments: list, routing_report: dict) -> None:
+    if not comments and not routing_report.get("selected"):
+        print("[ReviewBot] No agents ran — nothing to post.")
         return
 
-    headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json",
-    }
-
-    # Build the review body
-    severity_emoji = {
-        "critical": "🚨",
-        "high": "⚠️",
-        "medium": "💡",
-        "low": "📝",
-        "praise": "✅",
-    }
-
+    max_comments = 20
     review_comments = []
-    summary_parts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "praise": 0}
 
-    for c in comments:
+    for c in comments[:max_comments]:
+        if not c.get("file") or not c.get("line"):
+            continue
+
         severity = c.get("severity", "medium")
-        summary_parts[severity] = summary_parts.get(severity, 0) + 1
+        agent    = c.get("agent", "")
+        emoji    = SEVERITY_EMOJI.get(severity, "💡")
+        agent_tag = f" · {AGENT_EMOJI.get(agent, '')} {agent}" if agent else ""
 
-        emoji = severity_emoji.get(severity, "💡")
-        body = f"{emoji} **[{severity.upper()}]** ({c.get('category', 'general')})\n\n{c['comment']}"
+        body = (
+            f"{emoji} **[{severity.upper()}]**"
+            f" ({c.get('category', 'general')}{agent_tag})\n\n"
+            f"{c['comment']}"
+        )
 
         if c.get("suggested_fix"):
             body += f"\n\n```suggestion\n{c['suggested_fix']}\n```"
 
-        # Tag with rule_id for feedback tracking
         rule_id = c.get("rule_id", "unknown")
-        comment_hash = hashlib.md5(f"{c['file']}:{c.get('line', 0)}:{c['comment'][:50]}".encode()).hexdigest()[:8]
+        comment_hash = hashlib.md5(
+            f"{c['file']}:{c.get('line', 0)}:{c['comment'][:50]}".encode()
+        ).hexdigest()[:8]
         body += f"\n\n<sub>reviewbot:{rule_id}:{comment_hash}</sub>"
 
-        if c.get("file") and c.get("line"):
-            review_comments.append({
-                "path": c["file"],
-                "line": c["line"],
-                "body": body,
-            })
+        review_comments.append({
+            "path": c["file"],
+            "line": c["line"],
+            "body": body,
+        })
 
-    # Create the review
-    summary = " | ".join(
-        f"{severity_emoji.get(k, '')} {k}: {v}"
-        for k, v in summary_parts.items()
-        if v > 0
-    )
-
-    review_body = {
-        "body": f"## 🤖 ReviewBot Analysis\n\n{summary}\n\n"
-                f"_I learn from your feedback! React with 👍/👎 on my comments, "
-                f"or resolve/dismiss them to help me improve._",
-        "event": "COMMENT",
-        "comments": review_comments[:15],  # GitHub API limit
+    payload = {
+        "body":     build_review_body(routing_report),
+        "event":    "COMMENT",
+        "comments": review_comments,
     }
 
     resp = requests.post(
         f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}/reviews",
-        headers=headers,
-        json=review_body,
+        headers=HEADERS,
+        json=payload,
     )
 
     if resp.status_code in (200, 201):
-        print(f"[ReviewBot] Posted review with {len(review_comments)} comments.")
+        print(f"[ReviewBot] Posted review: {len(review_comments)} inline comments.")
     else:
-        print(f"[ReviewBot] Failed to post review: {resp.status_code} {resp.text}")
+        print(f"[ReviewBot] Failed to post review: {resp.status_code} — {resp.text[:200]}")
 
 
-def record_review_metadata(comments):
-    """Save review metadata for later feedback tracking."""
+# ─── Metadata ─────────────────────────────────────────────────────────────────
+
+def record_metadata(comments: list, routing_report: dict) -> None:
     metadata_file = KNOWLEDGE_DIR / "history" / "reviews.json"
     metadata_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -382,53 +244,53 @@ def record_review_metadata(comments):
         except json.JSONDecodeError:
             existing = []
 
-    review_record = {
-        "pr_number": int(PR_NUMBER),
-        "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
-        "author": PR_AUTHOR,
+    import datetime
+    existing.append({
+        "pr_number":      int(PR_NUMBER),
+        "timestamp":      datetime.datetime.utcnow().isoformat(),
+        "author":         PR_AUTHOR,
+        "agents_used":    routing_report.get("selected", []),
+        "agents_skipped": routing_report.get("skipped", []),
         "comments": [
             {
-                "file": c.get("file"),
-                "line": c.get("line"),
-                "severity": c.get("severity"),
-                "category": c.get("category"),
-                "rule_id": c.get("rule_id", "unknown"),
+                "file":         c.get("file"),
+                "line":         c.get("line"),
+                "severity":     c.get("severity"),
+                "category":     c.get("category"),
+                "agent":        c.get("agent"),
+                "rule_id":      c.get("rule_id", "unknown"),
                 "comment_hash": hashlib.md5(
                     f"{c['file']}:{c.get('line', 0)}:{c['comment'][:50]}".encode()
                 ).hexdigest()[:8],
             }
             for c in comments
         ],
-    }
+    })
 
-    existing.append(review_record)
-    # Keep last 500 reviews
     existing = existing[-500:]
     metadata_file.write_text(json.dumps(existing, indent=2))
 
 
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
 def main():
-    print(f"[ReviewBot] Reviewing PR #{PR_NUMBER}: {PR_TITLE}")
+    print(f"[ReviewBot] PR #{PR_NUMBER}: {PR_TITLE}")
 
-    # Load knowledge
     knowledge = load_knowledge()
-    print(f"[ReviewBot] Loaded {len(knowledge['rules'])} rules, "
-          f"{len(knowledge.get('patterns', {}).get('known_bad', []))} bad patterns")
+    print(f"[ReviewBot] Knowledge: {len(knowledge['rules'])} rules loaded")
 
-    # Get diff and context
-    diff = get_pr_diff()
-    files_context = get_changed_files_context()
-    print(f"[ReviewBot] Analyzing {len(files_context)} changed files")
+    diff          = get_pr_diff()
+    files_context = get_changed_files()
+    print(f"[ReviewBot] {len(files_context)} changed files fetched")
 
-    # Run review
-    comments = run_review(knowledge, diff, files_context)
-    print(f"[ReviewBot] Generated {len(comments)} review comments")
+    # Multi-agent orchestrated review
+    comments, routing_report = orchestrate(diff, files_context, knowledge)
 
     # Post to GitHub
-    post_review_comments(comments)
+    post_review(comments, routing_report)
 
-    # Record for feedback tracking
-    record_review_metadata(comments)
+    # Save for feedback tracking + self-improvement
+    record_metadata(comments, routing_report)
 
 
 if __name__ == "__main__":

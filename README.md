@@ -1,55 +1,132 @@
 # ReviewBot 🤖
 
-**A self-learning AI code review platform that gets smarter with every PR.**
+**A self-learning AI code review platform powered by multiple specialized agents.**
 
-ReviewBot uses Claude to review pull requests, fix build failures, and — most importantly — **learns from your team's feedback to improve itself automatically**. It raises PRs to update its own rules based on what your team finds helpful vs. noisy.
-
----
-
-## Why ReviewBot?
-
-Most AI code review tools are static — they apply the same rules forever. ReviewBot is different:
-
-| Feature | Static Tools | ReviewBot |
-|---------|-------------|-----------|
-| Reviews PRs | ✅ | ✅ |
-| Learns from feedback | ❌ | ✅ 👍/👎 reactions, resolved/dismissed comments |
-| Detects reverted PRs | ❌ | ✅ Creates "never miss" rules automatically |
-| Fixes build failures | ❌ | ✅ Analyzes CI logs and suggests/creates fix PRs |
-| Evolves its own rules | ❌ | ✅ Raises PRs to `.reviewbot/` with rule changes |
-| Repo-specific knowledge | ❌ | ✅ Learns your infra, components, and patterns |
-| Human-in-the-loop | N/A | ✅ All rule changes require team approval |
+ReviewBot uses Claude to review pull requests through a team of focused agents — each an expert in its domain. It learns from your team's feedback to retire noisy rules, boost effective ones, and evolve its knowledge automatically.
 
 ---
 
 ## How It Works
 
 ```
-  PR Opened ──────► Review Engine (Claude API) ──────► Inline Comments
-                          │                                   │
-                          │ reads                    team reacts (👍/👎)
-                          ▼                                   │
-                   .reviewbot/                                │
-                   ├── rules.yaml ◄───── Self-Improvement ◄──┘
-                   ├── patterns.json         Engine
-                   ├── scores.json        (weekly cron)
-                   └── infra.yaml              │
-                                               ▼
-                                     Raises PR with updated rules
-                                     (human reviews & merges)
+PR Opened
+    │
+    ▼
+┌─────────────────────────────────────────────────────┐
+│                   ORCHESTRATOR                       │
+│  Analyzes PR (file types, size, patterns)           │
+│  Decides which agents are relevant — no wasted calls │
+└──────────┬──────────────────────────────────────────┘
+           │  runs selected agents in parallel
+           ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  🔒 Security  ✨ Code Quality  🏗️ Architecture  🔧 Simplification │
+│  🧪 Test Coverage  ⚡ Performance                                 │
+│                                                                  │
+│  Each agent: focused system prompt + domain expertise            │
+│  All run concurrently via ThreadPoolExecutor                     │
+└──────────┬───────────────────────────────────────────────────────┘
+           │  results merged + deduplicated
+           ▼
+    Unified PR Review
+    (inline comments tagged by agent + severity)
+           │
+           │  team reacts (👍/👎, resolve/dismiss)
+           ▼
+    ┌─────────────────────────────┐
+    │   .reviewbot/ knowledge     │
+    │   rules.yaml  scores.json   │◄── weekly self-improvement
+    │   patterns.json  infra.yaml │    raises PR with rule changes
+    └─────────────────────────────┘
 ```
 
-### The Learning Loop
+---
 
-1. **ReviewBot posts comments** on your PR, tagged with rule IDs for tracking
+## The Agent Team
+
+| Agent | Emoji | Triggers When | Focuses On |
+|-------|-------|---------------|------------|
+| **Security** | 🔒 | Every PR | Secrets, injection, auth, OWASP Top 10, crypto |
+| **Code Quality** | ✨ | Code files present | Error handling, null safety, complexity, naming |
+| **Architecture** | 🏗️ | Large PRs, new files, API changes | SOLID, coupling, API contracts, dependencies |
+| **Simplification** | 🔧 | 30+ lines added | DRY, YAGNI, over-engineering, dead abstractions |
+| **Test Coverage** | 🧪 | Production code changed | Missing tests, edge cases, test quality |
+| **Performance** | ⚡ | DB/loop/query patterns detected | N+1 queries, complexity, memory, caching |
+
+### Smart Routing — No Wasted API Calls
+
+The orchestrator analyzes the PR before running any agents:
+
+```
+Small config change (5 lines)?
+  → Only Security runs
+
+New service file (300 lines, API routes)?
+  → All 6 agents run in parallel
+
+Pure test-file PR?
+  → Security + Code Quality only (others skip)
+
+SQL migration file?
+  → Security + Performance + Architecture
+```
+
+Each agent's `should_run()` check is instant — no API call. Agents only run when they can add value.
+
+### What the Review Looks Like
+
+```
+## 🤖 ReviewBot Multi-Agent Review
+
+4 findings from 3 specialized agents
+
+  🔒 security:      2 findings
+  ✨ code_quality:  1 finding
+  ⚡ performance:   1 finding
+  ~~architecture~~  (skipped — PR too small)
+  ~~simplification~~ (skipped — PR too small)
+  ~~test_coverage~~  (skipped — only test files changed)
+```
+
+Inline comments are tagged by agent and severity:
+
+```
+🔒 [CRITICAL] (security · 🔒 security)
+Hardcoded API key on line 12. Move to environment variable.
+
+⚠️ [HIGH] (bug · ✨ code_quality)
+getUserById() can return null but is dereferenced without a null check on line 34.
+
+⚡ [MEDIUM] (performance · ⚡ performance)
+N+1 query: getUser() called inside a loop. Fetch all users once before the loop.
+```
+
+---
+
+## The Learning Loop
+
+1. **Agents post comments** tagged with rule IDs and agent names
 2. **Your team reacts** — 👍 (useful), 👎 (noise), resolve (fixed it), dismiss (not applicable)
-3. **Signals accumulate** — reactions, PR reverts, build failures, merge velocity
-4. **Weekly self-improvement** — ReviewBot analyzes all signals and:
-   - 🗑️ **Retires** rules that consistently get 👎 or dismissed
-   - ⬆️ **Boosts** rules that consistently get 👍 or resolved
+3. **Signals accumulate** — feedback scores per rule, revert patterns, merge velocity
+4. **Weekly self-improvement** — ReviewBot analyzes all signals:
+   - 🗑️ **Retires** rules consistently getting 👎 or dismissed
+   - ⬆️ **Boosts** rules consistently getting 👍 or resolved
    - ✨ **Creates** new rules from repeated review patterns
-   - 🛡️ **Creates guard rules** from reverted PRs (so it never misses them again)
-5. **Raises a PR** to `.reviewbot/` — your team reviews and merges the rule changes
+   - 🛡️ **Creates guard rules** from reverted PRs
+5. **Raises a PR** to `.reviewbot/` — your team reviews and merges
+
+### Feedback Scoring
+
+| Signal | Score | Meaning |
+|--------|-------|---------|
+| 👍 on comment | +1 | Agent was right |
+| 👎 on comment | -2 | Agent was wrong |
+| Comment resolved by author | +2 | Useful — author fixed it |
+| Comment dismissed | -3 | Noise |
+| PR approved after review | +1 | Review led to improvements |
+| PR reverted after merge | -2 per rule | Review missed something critical |
+
+Rules below **-10** (5+ samples) are **retired**. Rules above **+10** are **boosted** to higher severity.
 
 ---
 
@@ -58,109 +135,29 @@ Most AI code review tools are static — they apply the same rules forever. Revi
 ### Prerequisites
 
 - GitHub repo with Actions enabled
-- [Anthropic API key](https://console.anthropic.com/) (Claude API)
+- [Anthropic API key](https://console.anthropic.com/)
 
-### Step 1: Create the knowledge store
+### Step 1: Initialize the knowledge store
 
-Create a `.reviewbot/` directory in your repo root:
+```bash
+bash scripts/setup.sh
+```
+
+Or manually:
 
 ```bash
 mkdir -p .reviewbot/history
-```
-
-Create `.reviewbot/config.yaml`:
-
-```yaml
-model: claude-sonnet-4-20250514
-
-review:
-  auto_review: true
-  severity_threshold: low     # low | medium | high | critical
-  max_comments_per_pr: 15
-  review_tests: true
-  include_praise: true
-  skip_paths:
-    - "**/*.lock"
-    - "**/node_modules/**"
-    - "**/vendor/**"
-
-learning:
-  enabled: true
-  min_feedback_samples: 5
-  auto_create_rules: true
-  auto_retire_rules: true
-  require_approval: true      # Rule change PRs need human approval
-
-build_fixer:
-  enabled: true
-  auto_fix_pr: true
-  confidence_threshold: medium
-```
-
-Create `.reviewbot/rules.yaml` (starter rules — these will evolve):
-
-```yaml
-- id: security_secrets
-  description: Flag hardcoded secrets, API keys, tokens, or passwords in code
-  severity: critical
-  category: security
-  scope: "**/*"
-
-- id: error_handling
-  description: Functions that can throw should have proper error handling
-  severity: high
-  category: bug
-  scope: "**/*.{ts,js,py,java,go}"
-
-- id: null_checks
-  description: Dereferences of potentially null/undefined values without null checks
-  severity: high
-  category: bug
-  scope: "**/*.{ts,js,java}"
-
-- id: sql_injection
-  description: String concatenation in SQL queries instead of parameterized queries
-  severity: critical
-  category: security
-  scope: "**/*.{py,js,ts,java}"
-
-- id: missing_tests
-  description: New public functions should have corresponding test coverage
-  severity: medium
-  category: test
-  scope: "src/**/*"
-
-- id: large_function
-  description: Functions longer than 80 lines should be broken into smaller units
-  severity: medium
-  category: architecture
-  scope: "**/*"
-
-- id: breaking_api
-  description: Changes to public API signatures should be backward compatible or versioned
-  severity: high
-  category: architecture
-  scope: "src/api/**/*"
-
-- id: logging_sensitive
-  description: Never log PII, tokens, passwords, or other sensitive data
-  severity: critical
-  category: security
-  scope: "**/*"
-```
-
-Create empty tracking files:
-
-```bash
+cp templates/default-rules.yaml .reviewbot/rules.yaml
+cp templates/default-config.yaml .reviewbot/config.yaml
 echo '{}' > .reviewbot/patterns.json
 echo '{}' > .reviewbot/scores.json
 echo '{}' > .reviewbot/infra.yaml
 echo '[]' > .reviewbot/history/improvements.json
 ```
 
-### Step 2: Add the GitHub Actions workflow
+### Step 2: Add the workflow to your repo
 
-Create `.github/workflows/reviewbot.yml`:
+Copy `templates/consumer-workflow.yml` to `.github/workflows/reviewbot.yml`, replacing `YOUR_ORG` with `praveenkumardec89`:
 
 ```yaml
 name: ReviewBot
@@ -169,20 +166,10 @@ on:
     types: [opened, synchronize, reopened, closed]
   pull_request_review:
     types: [submitted]
-  pull_request_review_comment:
-    types: [created]
   issues:
     types: [labeled]
   schedule:
-    - cron: '0 2 * * 0'  # Weekly self-improvement (Sunday 2 AM)
-  workflow_dispatch:
-    inputs:
-      action:
-        description: 'Manual trigger'
-        type: choice
-        options:
-          - self-improve
-          - re-review
+    - cron: '0 2 * * 0'   # Weekly self-improvement
 
 jobs:
   ai-review:
@@ -199,28 +186,8 @@ jobs:
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-  detect-revert:
-    if: >
-      github.event_name == 'pull_request' &&
-      github.event.action == 'closed' &&
-      github.event.pull_request.merged == true &&
-      contains(github.event.pull_request.title, 'Revert')
-    uses: praveenkumardec89/reviewbot/.github/workflows/review.yml@main
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
   self-improve:
-    if: >
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'self-improve')
-    uses: praveenkumardec89/reviewbot/.github/workflows/self-improve.yml@main
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-  build-fixer:
-    if: >
-      github.event_name == 'issues' &&
-      contains(github.event.issue.labels.*.name, 'build-failure')
+    if: github.event_name == 'schedule'
     uses: praveenkumardec89/reviewbot/.github/workflows/self-improve.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -228,190 +195,213 @@ jobs:
 
 ### Step 3: Add your API key
 
-Go to your repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
+**Settings → Secrets and variables → Actions → New repository secret**
 
 - Name: `ANTHROPIC_API_KEY`
-- Value: Your Anthropic API key from [console.anthropic.com](https://console.anthropic.com/)
+- Value: Your key from [console.anthropic.com](https://console.anthropic.com/)
 
 ### Step 4: Push and go
 
 ```bash
 git add .reviewbot/ .github/workflows/reviewbot.yml
-git commit -m "Setup ReviewBot self-learning code review"
+git commit -m "Setup ReviewBot multi-agent code review"
 git push
 ```
 
-ReviewBot will activate on your next PR.
-
----
-
-## Learning Signals & Scoring
-
-ReviewBot tracks these signals to decide which rules are working:
-
-| Signal | Score | Meaning |
-|--------|-------|---------|
-| 👍 reaction on comment | +1 | Team agrees with the review |
-| 👎 reaction on comment | -2 | Team disagrees |
-| Comment resolved by author | +2 | Comment was useful, author fixed it |
-| Comment dismissed | -3 | Comment was noise or wrong |
-| PR approved after review changes | +1 | Review led to improvements |
-| PR reverted after merge | -5 | Review missed something critical |
-| Same pattern flagged 3+ times | — | Triggers new rule creation |
-
-Rules with a score below **-10** (with 5+ samples) get **retired**.
-Rules with a score above **+10** (with 5+ samples) get **boosted** to higher severity.
+ReviewBot activates on your next PR.
 
 ---
 
 ## Customization
 
-### Adding custom rules
-
-Edit `.reviewbot/rules.yaml`:
-
-```yaml
-- id: my_team_rule
-  description: Always use structured logging via our logger module, never print()
-  severity: medium
-  category: style
-  scope: "**/*.py"
-  example: "print('error') → logger.error('payment_failed', user_id=uid)"
-```
-
-### Adding component knowledge
-
-Edit `.reviewbot/infra.yaml` to give ReviewBot context about your architecture:
-
-```yaml
-src/payments/:
-  owner: payments-team
-  notes: PCI-DSS compliant zone — extra security scrutiny needed
-  dependencies: [stripe-sdk, vault]
-
-src/auth/:
-  owner: security-team
-  notes: OAuth2 + JWT — any changes need security review
-
-src/data-pipeline/:
-  owner: data-eng
-  notes: Runs on Spark, processes 10M+ events/day — watch for performance
-```
-
-### Adjusting learning sensitivity
+### Disable specific agents
 
 In `.reviewbot/config.yaml`:
 
 ```yaml
-learning:
-  min_feedback_samples: 10    # More samples before adjusting (conservative)
-  auto_create_rules: false    # Don't auto-create, only retire/boost
-  require_approval: true      # Always require human approval for changes
+agents:
+  security: true          # Strongly recommend keeping this on
+  code_quality: true
+  architecture: false     # Disable if your team handles design reviews manually
+  simplification: true
+  test_coverage: false    # Disable if you have a dedicated QA process
+  performance: true
 ```
 
----
+### Tune routing thresholds
 
-## Knowledge Store Structure
-
-```
-.reviewbot/
-├── config.yaml              # Your configuration (edit freely)
-├── rules.yaml               # Review rules — auto-evolved + manual (edit freely)
-├── patterns.json             # Learned code patterns (auto-managed)
-├── scores.json               # Feedback scores per rule (auto-managed)
-├── infra.yaml                # Component/infra knowledge (edit freely)
-└── history/
-    ├── reviews.json          # Review audit log
-    ├── feedback.json         # Feedback signal log
-    ├── reverts.json          # Revert tracking log
-    ├── build_fixes.json      # Build fix log
-    └── improvements.json     # Self-improvement history
+```yaml
+routing:
+  architecture_min_additions: 100   # Only run on PRs > 100 lines added
+  simplification_min_additions: 50
+  performance_require_patterns: true
 ```
 
-**Files you should edit:** `config.yaml`, `rules.yaml`, `infra.yaml`
+### Add custom rules (used by all agents)
 
-**Files managed by ReviewBot:** `patterns.json`, `scores.json`, `history/*`
+Edit `.reviewbot/rules.yaml`:
+
+```yaml
+- id: use_structured_logging
+  description: Always use our logger module, never print() or console.log()
+  severity: medium
+  category: style
+  scope: "**/*.{py,js,ts}"
+  example: "print('error') → logger.error('payment_failed', user_id=uid)"
+```
+
+### Add component knowledge
+
+Edit `.reviewbot/infra.yaml` — agents use this for context-aware reviews:
+
+```yaml
+src/payments/:
+  owner: payments-team
+  notes: PCI-DSS zone — extra security scrutiny required
+  dependencies: [stripe-sdk, vault]
+
+src/auth/:
+  owner: security-team
+  notes: OAuth2 + JWT — any changes need security team review
+```
 
 ---
 
 ## Architecture
 
-The engine consists of 5 Python modules:
+```
+engine/
+├── reviewer.py             # Entry point: loads knowledge, fetches PR, posts review
+├── orchestrator.py         # Routes PR to agents, runs in parallel, merges results
+└── agents/
+    ├── base.py             # BaseAgent: should_run() + review() contract
+    ├── security.py         # 🔒 OWASP, secrets, injection, auth
+    ├── code_quality.py     # ✨ Error handling, null safety, complexity
+    ├── architecture.py     # 🏗️ SOLID, API design, coupling
+    ├── simplification.py   # 🔧 DRY, YAGNI, dead abstractions
+    ├── test_coverage.py    # 🧪 Missing tests, edge cases
+    └── performance.py      # ⚡ N+1, complexity, memory, caching
 
-| Module | Trigger | What it does |
-|--------|---------|-------------|
-| `reviewer.py` | PR opened/updated | Reads knowledge store, analyzes diff with Claude, posts review comments |
-| `feedback_collector.py` | Review submitted | Tracks 👍/👎 reactions, resolved/dismissed comments, updates scores |
-| `revert_tracker.py` | Revert PR merged | Detects reverts, applies strong penalties, records patterns |
-| `signal_aggregator.py` | Weekly cron | Collects all signals — merge velocity, patterns, component quality |
-| `self_improver.py` | Weekly cron | Analyzes signals, generates rule changes, creates improvement PRs |
-| `build_fixer.py` | Issue labeled `build-failure` | Analyzes CI logs, suggests fixes, creates fix PRs |
+engine/
+├── feedback_collector.py   # Tracks 👍/👎 reactions → rule scores
+├── revert_tracker.py       # Detects PR reverts → guard rules
+├── signal_aggregator.py    # Weekly: collects all learning signals
+├── self_improver.py        # Weekly: proposes rule changes via PR
+└── build_fixer.py          # Analyzes CI failures → fix PRs
+```
 
-All modules share the `.reviewbot/` knowledge store. The review engine reads it for context; the feedback/revert/signal modules write to it; the self-improver reads everything and proposes changes via PR.
+### Orchestration Flow (simplified)
+
+```python
+# 1. Characterize the PR — no API calls
+pr_context = analyze_pr_context(diff, files_context)
+# → {extensions, file_count, total_additions, has_code, has_sql, ...}
+
+# 2. Route — each agent's should_run() inspects pr_context
+selected, skipped = route_agents(pr_context)
+
+# 3. Run all selected agents concurrently
+results = run_agents_parallel(selected, diff, files_context, knowledge)
+
+# 4. Merge: (file, line) dedup keeps highest severity; sort critical→praise
+comments = deduplicate_and_sort(results)
+```
 
 ---
 
-## How the Self-Improvement PR Looks
+## Knowledge Store
 
-Every week (or on manual trigger), ReviewBot raises a PR like this:
+```
+.reviewbot/
+├── config.yaml          ← Edit: model, agents, routing thresholds
+├── rules.yaml           ← Edit: review rules (auto-evolved + manual)
+├── infra.yaml           ← Edit: component/team knowledge
+├── patterns.json        ← Auto: learned code patterns
+├── scores.json          ← Auto: feedback scores per rule
+└── history/
+    ├── reviews.json     ← Auto: full review audit log (with agent breakdown)
+    ├── feedback.json    ← Auto: feedback signals
+    ├── reverts.json     ← Auto: revert tracking
+    └── improvements.json ← Auto: self-improvement history
+```
+
+**Edit freely:** `config.yaml`, `rules.yaml`, `infra.yaml`
+
+**Auto-managed:** `patterns.json`, `scores.json`, `history/*`
+
+---
+
+## Self-Improvement PR Example
+
+Every Sunday (or on manual trigger), ReviewBot raises:
 
 > ### 🤖 ReviewBot: Self-improvement update (2026-03-15)
 >
 > **Analysis period:** Last 14 days | **PRs analyzed:** 23
 >
 > #### 🗑️ Rules Retired
-> - `style_semicolons`: Score -14 over 8 samples — team consistently dismissed
+> - `style_semicolons` (code_quality agent): Score -14 over 8 samples
 >
 > #### ⬆️ Rules Boosted
-> - `error_handling`: Score +18 over 12 samples — consistently useful
+> - `error_handling` (code_quality agent): Score +18 over 12 samples
 >
 > #### ✨ New Rules Created
-> - `auto_src_api_security`: Recurring security issues in `src/api/` (flagged 5 times)
-> - `revert_guard_src_payments`: Reverts detected in `src/payments/` — guard rule added
+> - `auto_src_api_security`: Security agent flagged recurring issues in `src/api/` (5×)
+> - `revert_guard_src_payments`: Multiple reverts in `src/payments/` — guard rule added
 >
-> *This PR was auto-generated. Please review before merging.*
+> *Auto-generated. Review before merging.*
 
 ---
 
 ## FAQ
 
 **Q: Does ReviewBot review its own self-improvement PRs?**
-No — PRs from the `reviewbot/*` branch are skipped to avoid infinite loops.
+No — PRs from `reviewbot/*` branches are skipped automatically.
 
-**Q: Can I manually trigger a self-improvement cycle?**
-Yes — go to Actions → ReviewBot → Run workflow → select "self-improve".
+**Q: What if I want every agent to always run?**
+Set all `routing.*` thresholds to `0` in `.reviewbot/config.yaml`.
 
-**Q: What if I don't want auto-generated rules?**
-Set `learning.auto_create_rules: false` in config. ReviewBot will still retire/boost existing rules.
+**Q: Can I manually trigger a review or self-improvement?**
+Yes — Actions → ReviewBot → Run workflow → select the action.
 
-**Q: How much does it cost?**
-Depends on PR volume. Each review uses ~2K-5K tokens (Claude Sonnet). For a team doing 20 PRs/week, expect ~$5-15/month.
+**Q: What does it cost?**
+With smart routing, a typical PR triggers 3–4 agents at ~1K–3K tokens each (Claude Sonnet). For a team doing 20 PRs/week, expect ~$8–20/month.
 
 **Q: Can I use a different Claude model?**
-Yes — change `model` in config.yaml to any supported Claude model (e.g., `claude-opus-4-6` for deeper analysis).
+Yes — change `model` in `config.yaml`. Use `claude-opus-4-6` for deeper analysis on critical paths.
+
+**Q: Why multiple focused agents instead of one large prompt?**
+Focused agents are more accurate — a security specialist catches subtle auth issues that a general reviewer misses. Focused prompts also reduce hallucinations. Parallel execution means no added latency vs. a single call.
 
 ---
 
 ## Roadmap
 
+- [ ] Agent-level feedback scoring (which agent's comments are most useful)
 - [ ] Slack/Discord notifications for improvement PRs
-- [ ] Web dashboard for rule effectiveness visualization
+- [ ] Web dashboard for per-agent effectiveness
 - [ ] GitLab CI/CD support
 - [ ] Multi-repo shared knowledge (org-level rules)
-- [ ] Per-directory rule scoping
+- [ ] Custom agent definitions via `.reviewbot/agents/`
 - [ ] PR complexity scoring and auto-assignment
 
 ---
 
 ## Contributing
 
-PRs welcome! See the roadmap above for areas that need work.
+PRs welcome. See the roadmap for priority areas.
+
+To add a new agent:
 
 ```bash
-git clone https://github.com/praveenkumardec89/reviewbot.git
-cd reviewbot
-# Make your changes
-# Test locally by running the engine modules with mock data
+# 1. Copy an existing agent as template
+cp engine/agents/performance.py engine/agents/my_agent.py
+
+# 2. Implement should_run() and build_system_prompt()
+
+# 3. Register it
+echo "from .my_agent import MyAgent" >> engine/agents/__init__.py
+# Add MyAgent() to ALL_AGENTS in engine/agents/__init__.py
 ```
 
 ---
