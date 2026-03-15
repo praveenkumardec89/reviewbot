@@ -20,7 +20,6 @@ PATTERNS_FILE = KNOWLEDGE_DIR / "patterns.json"
 BUILD_FIXES_LOG = KNOWLEDGE_DIR / "history" / "build_fixes.json"
 CONFIG_FILE = KNOWLEDGE_DIR / "config.yaml"
 
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 REPO = os.environ["REPO"]
 ISSUE_NUMBER = os.environ.get("ISSUE_NUMBER", "")
@@ -104,7 +103,7 @@ def get_workflow_logs():
 
 def analyze_and_fix():
     """Use Claude to analyze the build failure and suggest a fix."""
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = Anthropic()
 
     build_history = load_build_history()
     known_patterns = load_known_fix_patterns()

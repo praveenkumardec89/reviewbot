@@ -35,7 +35,6 @@ SUMMARY_FILE = Path("/tmp/improvement_summary.txt")
 PR_BODY_FILE = Path("/tmp/improvement_pr_body.md")
 REVIEWERS_FILE = Path("/tmp/reviewers.txt")
 
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 
 MIN_SAMPLES = 5
@@ -243,7 +242,7 @@ def update_infra_knowledge(state, signals):
 
 def generate_rule_with_ai(pattern):
     """Use Claude to generate a well-written review rule from a pattern."""
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = Anthropic()
 
     prompt = f"""Based on this recurring code review pattern, generate a review rule.
 
@@ -280,7 +279,7 @@ Respond with ONLY valid JSON (no markdown):
 
 def generate_revert_rule_with_ai(directory, revert_patterns):
     """Use Claude to analyze revert patterns and generate a guard rule."""
-    client = Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = Anthropic()
 
     patches_preview = "\n---\n".join(
         f"File: {rp['file']}\nPatch preview:\n{rp['patch_preview'][:200]}"

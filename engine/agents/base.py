@@ -7,8 +7,6 @@ import os
 import json
 from anthropic import Anthropic
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-
 COMMENT_FORMAT = """
 RESPONSE FORMAT — return a JSON array only. Each item:
 {
@@ -43,7 +41,9 @@ class BaseAgent:
         raise NotImplementedError
 
     def review(self, diff: str, files_context: list, knowledge: dict) -> list[dict]:
-        client = Anthropic(api_key=ANTHROPIC_API_KEY)
+        # Anthropic() reads ANTHROPIC_API_KEY from env automatically — don't pass it
+        # explicitly so it's resolved at call time, not module import time.
+        client = Anthropic()
         model = knowledge.get("config", {}).get("model", "claude-sonnet-4-20250514")
 
         pr_number = os.environ.get("PR_NUMBER", "")
